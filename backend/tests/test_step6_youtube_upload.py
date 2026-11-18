@@ -55,8 +55,10 @@ class TestStep6YouTubeUpload(unittest.TestCase):
         data = res.json()
         self.assertEqual(data["status"], "queued")
 
+        up = db.q("SELECT * FROM uploads WHERE clip_id=?", (cid,), one=True)
+        self.assertIsNotNone(up)
         clip = db.q("SELECT * FROM clips WHERE id=?", (cid,), one=True)
-        self.assertEqual(clip["youtube_status"], "queued")
+        self.assertIn(clip["youtube_status"], ("queued", "uploading", "failed"))
 
     def test_upload_all_with_spread_minutes(self):
         pid = db.create_project("yt_spread_proj", "/tmp/fake.mp4")

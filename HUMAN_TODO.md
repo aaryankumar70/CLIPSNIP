@@ -1,43 +1,67 @@
 # HUMAN_TODO.md
 
-List of actions required from the human user. Ordered by importance, with copy-paste commands.
+List of actions required from the human user. Ordered by importance, with exact copy-paste commands.
 
 - [ ] **1. Install system packages & start Ollama** (requires `sudo`):
   ```bash
-  sudo pacman -S --needed ffmpeg nodejs npm uv ollama git deno && sudo systemctl enable --now ollama
+  sudo pacman -S --needed ollama && sudo systemctl enable --now ollama
   ```
-  *Note: `ollama` and `deno` are not yet installed on this system. After installing and starting ollama, pull the default local model:*
+  *After starting Ollama, pull the default local language model:*
   ```bash
   ollama pull qwen2.5:3b-instruct
   ```
 
-- [ ] **2. Google Cloud setup for YouTube Uploads** (requires browser login):
-  1. Go to [Google Cloud Console](https://console.cloud.google.com/), create a new project.
-  2. Enable the **YouTube Data API v3**.
+- [ ] **2. Google Cloud Setup for YouTube Uploads** (requires browser login):
+  1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project.
+  2. Enable the **YouTube Data API v3** in APIs & Services.
   3. Configure OAuth consent screen:
      - User Type: **External**
      - Publishing status: Leave in **Testing**
-     - Test users: Add your own Google/YouTube email address.
+     - Test users: Add your personal Google / YouTube account email.
   4. Create Credentials:
-     - Click **Create Credentials** -> **OAuth client ID**.
+     - Click **Create Credentials** → **OAuth client ID**.
      - Application type: **Desktop app**.
-     - Download the JSON client secret file and save it to the project root at:
-       `storage/client_secret.json`
+     - Download the JSON client secret file and save it to:
+       `/home/ryu/Projects/ClipSnip/storage/client_secret.json`
 
-- [ ] **3. Authenticate YouTube in Dashboard**:
-  - The first time you click "Connect YouTube" in the Clipper web dashboard, a browser tab will open for OAuth authorization. Click "Allow".
-  - *(Note: In Testing mode, refresh tokens expire every 7 days. Click "Reconnect YouTube" if prompted).*
+- [ ] **3. Connect YouTube Channel in Dashboard**:
+  - Start the app with `./start.sh` and open `http://localhost:8000`.
+  - In the top header or settings, click **Connect YouTube**.
+  - A browser window will open for OAuth authorization. Log into your YouTube channel and click "Allow".
+  - *(Note: In Google Cloud Testing mode, refresh tokens expire every 7 days. Click "Reconnect YouTube" when prompted).*
 
-- [ ] **4. Keep the laptop awake during processing**:
-  - Disable suspend/lock timeout in Omarchy idle settings.
-  - Configure systemd logind to ignore lid close:
-    ```bash
-    sudo sed -i 's/#HandleLidSwitch=suspend/HandleLidSwitch=ignore/' /etc/systemd/logind.conf
-    sudo systemctl restart systemd-logind
-    ```
+- [ ] **4. Enable Systemd User Service (Auto-Start at Boot)**:
+  Run without sudo to keep ClipSnip running as a background service:
+  ```bash
+  systemctl --user enable --now clipper.service
+  ```
+  Check status and logs anytime:
+  ```bash
+  systemctl --user status clipper.service
+  journalctl --user -u clipper.service -f
+  ```
 
-- [ ] **5. (Optional) Paste a test video URL**:
-  - Open `CLIPPER_BUILD_PLAN.md` and set `TEST_VIDEO_URL=<url>` at the top with a short YouTube video (under 10 min) from a creator who allows clipping.
+- [ ] **5. Keep Laptop Awake During Long Jobs**:
+  Configure systemd logind to ignore laptop lid close while on AC power:
+  ```bash
+  sudo sed -i 's/#HandleLidSwitch=suspend/HandleLidSwitch=ignore/' /etc/systemd/logind.conf
+  sudo systemctl restart systemd-logind
+  ```
 
-- [ ] **6. Creator Permission & Whitelisting**:
-  - Ensure you have written permission from video creators to make and publish clips, and ask them to whitelist your channel to avoid Content ID claims.
+- [ ] **6. (Optional) Open Port 8000 for LAN Mode**:
+  If you enable LAN mode in Settings to control ClipSnip from your phone or tablet on home Wi-Fi:
+  ```bash
+  sudo ufw allow 8000/tcp
+  ```
+
+- [ ] **7. Maintain yt-dlp Updates**:
+  YouTube frequently updates player mechanics. Run this update command regularly:
+  ```bash
+  cd /home/ryu/Projects/ClipSnip
+  .venv/bin/uv pip install -U yt-dlp
+  ```
+
+- [ ] **8. Creator Permission & Attribution**:
+  - Only clip content from creators who explicitly permit shorts/clipping.
+  - Ask creators to whitelist your YouTube channel handle to avoid automated Content ID claims.
+  - ClipSnip automatically appends source attribution to all clip descriptions (`Clipped from {source_title} by {channel} - {source_url}`).

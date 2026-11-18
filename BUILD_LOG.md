@@ -247,4 +247,27 @@ Running clip selection on a 600-second synthetic transcript generated the follow
 - Run service in background: `systemctl --user enable --now clipper.service`
 - Run end-to-end tests: `.venv/bin/pytest backend/tests/test_step8_e2e.py`
 
+## Step 9: Final Verification and Report
+
+### Changes Made
+- Ran full automated pytest suite across all modules: 56 tests passed in 105s.
+- Tested launcher (`./start.sh --no-browser`) and verified live startup, unified serving, and `/api/health` diagnostic endpoint (`http://127.0.0.1:8000/api/health`).
+- Created `USAGE.md` detailing startup options, multi-URL ingestion, live monitoring, clip editing drawer, export zip archive, YouTube spread uploads, yt-dlp maintenance, and ethical creator attribution.
+- Updated `HUMAN_TODO.md` with prioritized, exact copy-paste commands for human-only actions (pacman install for Ollama, model pull, Google Cloud OAuth desktop app setup, systemd user service enablement, logind lid-close config).
+- All 10 steps (Step 0 through Step 9) fully executed without skipping or violating constraints (zero paid APIs, 8 GB RAM memory budget with sequential processing, Linux pathlib, no sudo).
+
+### Final Test Summary
+- **Total Tests:** 56 passed, 0 failed.
+  - `test_ai_db.py`: 5 passed
+  - `test_api.py`: 4 passed
+  - `test_media.py`: 8 passed
+  - `test_settings_ollama.py`: 7 passed
+  - `test_step2_ingest_transcript.py`: 6 passed
+  - `test_step3_selection_metadata.py`: 6 passed
+  - `test_step4_render_export.py`: 5 passed
+  - `test_step5_persistent_queue_resume.py`: 4 passed
+  - `test_step6_youtube_upload.py`: 6 passed
+  - `test_step8_e2e.py`: 5 passed
+
+
 
