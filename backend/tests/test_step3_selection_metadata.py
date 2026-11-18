@@ -140,5 +140,27 @@ class TestStep3ClipSelectionAndMetadata(unittest.TestCase):
         self.assertIn("Clipped from GTA 6 Full Breakdown by GamerChannel", meta["description"])
         self.assertIn("vicecity", meta["tags"])
 
+    def test_candidate_expansion_for_short_llm_ranges(self):
+        s_map = {s["i"]: s for s in self.sentences}
+        # Model only selected sentences 1 to 2 (approx 20s), which is < 60s
+        raw = json.dumps({
+            "clips": [
+                {
+                    "start_sentence": 1,
+                    "end_sentence": 2,
+                    "title": "Short Hook",
+                    "hook_reason": "Exciting start",
+                    "standalone": True,
+                    "score": 9,
+                }
+            ]
+        })
+        cands = parse_window_candidates(raw, s_map, min_len=60, max_len=120)
+        self.assertEqual(len(cands), 1)
+        c = cands[0]
+        self.assertGreaterEqual(c["duration"], 60.0)
+        self.assertLessEqual(c["duration"], 120.0)
+        self.assertGreater(c["end_sentence"], 2)
+
 if __name__ == "__main__":
     unittest.main()

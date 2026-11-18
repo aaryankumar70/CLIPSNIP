@@ -378,6 +378,7 @@ def parse_window_candidates(
     sentences_map: dict[int, dict[str, Any]],
     min_len: float = MIN_CLIP_S,
     max_len: float = MAX_CLIP_S,
+    full_sentences_map: dict[int, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Parse candidate clips from LLM window response, converting sentence indices to precise timestamps."""
     m = re.search(r"\{.*\}", raw, re.S)
@@ -394,6 +395,7 @@ def parse_window_candidates(
         raise AIError("'clips' must be a list")
 
     candidates: list[dict[str, Any]] = []
+    lookup = full_sentences_map if full_sentences_map is not None else sentences_map
 
     for it in clips_data:
         try:
@@ -406,11 +408,11 @@ def parse_window_candidates(
         except (KeyError, ValueError, TypeError):
             continue
 
-        if s_idx not in sentences_map or e_idx not in sentences_map or e_idx < s_idx:
+        if s_idx not in sentences_map or e_idx not in lookup or e_idx < s_idx:
             continue
 
         s_sent = sentences_map[s_idx]
-        e_sent = sentences_map[e_idx]
+        e_sent = lookup[e_idx]
 
         if not s_sent.get("words") or not e_sent.get("words"):
             continue
@@ -419,11 +421,51 @@ def parse_window_candidates(
         end_time = e_sent["words"][-1]["end"] + 0.4
         duration = end_time - start_time
 
+        # If LLM picked a short hook dialogue (duration < min_len), expand end forward along sentences
+        curr_e = e_idx
+        while duration < min_len and (curr_e + 1) in lookup:
+            next_sent = lookup[curr_e + 1]
+            if not next_sent.get("words"):
+                break
+            next_end = next_sent["words"][-1]["end"] + 0.4
+            if next_end - start_time > max_len:
+                break
+            curr_e += 1
+            e_sent = next_sent
+            end_time = next_end
+            duration = end_time - start_time
+
+        # If still shorter than min_len, expand start backward if possible
+        curr_s = s_idx
+        while duration < min_len and (curr_s - 1) in lookup:
+            prev_sent = lookup[curr_s - 1]
+            if not prev_sent.get("words"):
+                break
+            prev_start = max(0.0, prev_sent["words"][0]["start"] - 0.15)
+            if (end_time - prev_start) > max_len:
+                break
+            curr_s -= 1
+            s_sent = prev_sent
+            start_time = prev_start
+            duration = end_time - start_time
+
+        # If candidate duration is longer than max_len, trim end backward
+        while duration > max_len and curr_e > curr_s:
+            curr_e -= 1
+            e_sent = lookup[curr_e]
+            if not e_sent.get("words"):
+                continue
+            end_time = e_sent["words"][-1]["end"] + 0.4
+            duration = end_time - start_time
+
         if not (min_len <= duration <= max_len):
             continue
 
+        s_idx = curr_s
+        e_idx = curr_e
+
         # Collect text of the clip
-        clip_sents = [sentences_map[i] for i in range(s_idx, e_idx + 1) if i in sentences_map]
+        clip_sents = [lookup[i] for i in range(s_idx, e_idx + 1) if i in lookup]
         clip_text = " ".join(cs.get("text", "") for cs in clip_sents)
         first_sent_text = s_sent.get("text", "")
         first_words = s_sent.get("words", [])
@@ -626,6 +668,69 @@ def generate_clip_metadata(
 
 # ----------------- Full Pipeline Clip Detection -----------------
 
+def generate_heuristic_candidates(
+    sentences: list[dict[str, Any]],
+    min_clip_s: int = MIN_CLIP_S,
+    max_clip_s: int = MAX_CLIP_S,
+    target_count: int = 10,
+) -> list[dict[str, Any]]:
+    """Heuristic fallback to extract candidate clips if LLM produces no candidates."""
+    if not sentences:
+        return []
+
+    cands: list[dict[str, Any]] = []
+    i = 0
+    total = len(sentences)
+
+    while i < total:
+        s_sent = sentences[i]
+        if not s_sent.get("words"):
+            i += 1
+            continue
+
+        start_time = max(0.0, s_sent["words"][0]["start"] - 0.15)
+        j = i
+        while j < total - 1:
+            next_sent = sentences[j + 1]
+            if not next_sent.get("words"):
+                break
+            dur = next_sent["words"][-1]["end"] + 0.4 - start_time
+            if dur > min(max_clip_s, 85.0):
+                break
+            j += 1
+
+        e_sent = sentences[j]
+        if not e_sent.get("words"):
+            i += 1
+            continue
+
+        end_time = e_sent["words"][-1]["end"] + 0.4
+        dur = end_time - start_time
+
+        if min_clip_s <= dur <= max_clip_s:
+            clip_sents = sentences[i : j + 1]
+            clip_text = " ".join(cs.get("text", "") for cs in clip_sents)
+            title = clip_text[:60].strip() or f"Highlight Moment {len(cands) + 1}"
+            cands.append({
+                "start_sentence": s_sent["i"],
+                "end_sentence": e_sent["i"],
+                "start": round(start_time, 2),
+                "end": round(end_time, 2),
+                "duration": round(dur, 2),
+                "title": title,
+                "hook_reason": "High interest segment",
+                "standalone": True,
+                "llm_score": 7.5,
+                "text": clip_text,
+                "first_sent_text": s_sent.get("text", ""),
+                "first_words": s_sent.get("words", []),
+            })
+            i += max(1, (j - i) // 2)
+        else:
+            i += 1
+
+    return cands
+
 def detect_clips_windowed(
     provider: AIProvider,
     sentences: list[dict[str, Any]],
@@ -642,6 +747,7 @@ def detect_clips_windowed(
     windows = build_windows(sentences)
     all_candidates: list[dict[str, Any]] = []
     seen_ranges: set[tuple[int, int]] = set()
+    full_s_map = {s["i"]: s for s in sentences}
 
     for w_sents in windows:
         s_map = {s["i"]: s for s in w_sents}
@@ -649,7 +755,13 @@ def detect_clips_windowed(
         user_prompt = f"Find up to 3 short clips in this transcript segment:\n\n{prompt_text}"
 
         def _val(raw: str) -> list[dict[str, Any]]:
-            return parse_window_candidates(raw, s_map, min_len=min_clip_s, max_len=max_clip_s)
+            return parse_window_candidates(
+                raw,
+                s_map,
+                min_len=min_clip_s,
+                max_len=max_clip_s,
+                full_sentences_map=full_s_map,
+            )
 
         try:
             window_cands = provider.chat_with_retry(
@@ -666,6 +778,11 @@ def detect_clips_windowed(
                     all_candidates.append(c)
         except Exception:
             continue
+
+    if not all_candidates:
+        all_candidates = generate_heuristic_candidates(
+            sentences, min_clip_s=min_clip_s, max_clip_s=max_clip_s, target_count=target_count
+        )
 
     selected = select_clips(all_candidates, duration, target_count, wav_path=wav_path)
     return selected

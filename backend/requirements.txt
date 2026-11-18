@@ -3,6 +3,7 @@ uvicorn[standard]>=0.29
 pydantic>=2.6
 python-multipart>=0.0.9
 faster-whisper>=1.0
+av>=11,<14
 openai>=1.30
 anthropic>=0.30
 pytest>=8
