@@ -91,7 +91,11 @@ def patch_clip(cid: str, body: ClipUpdate):
     start, end = changes.get("start", c["start"]), changes.get("end", c["end"])
     if not (0 <= start < end <= (p["duration"] or 0) + 0.05):
         raise HTTPException(422, f"Invalid range: end must be after start and within the {p['duration']:.1f}s video")
-    if changes: db.update_clip(cid, **changes, render_status="stale")
+    needs_rerender = any(k in changes for k in ("start", "end", "caption_style", "aspect"))
+    if changes:
+        if needs_rerender:
+            changes["render_status"] = "stale"
+        db.update_clip(cid, **changes)
     return _clip_public(_clip(cid))
 
 @router.post("/clips/{cid}/render", status_code=202)

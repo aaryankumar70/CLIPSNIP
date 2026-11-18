@@ -23,5 +23,7 @@ class ClipUpdate(BaseModel):
     start: float | None = Field(default=None, ge=0)
     end: float | None = None
     title: str | None = None
+    description: str | None = None
+    tags: str | None = None
     caption_style: Literal["classic", "bold", "highlight", "creator", "minimal", "off"] | None = None
     aspect: Literal["9:16", "1:1", "16:9"] | None = None

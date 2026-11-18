@@ -1,31 +1,95 @@
-"""Provider-agnostic clip detection. Local Ollama is the default provider."""
+"""Provider-agnostic clip detection, windowed sentence analysis, scoring, and metadata generation."""
 import json
+import math
 import os
 import re
+import wave
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Callable
 import httpx
-from pydantic import ValidationError
-from ..config import get_settings
+import numpy as np
+from pydantic import BaseModel, Field, ValidationError
+
+from ..config import (
+    DEFAULT_FOOTER_TEMPLATE,
+    DEFAULT_HASHTAGS,
+    DEFAULT_TAGS,
+    IDEAL_CLIP_MAX_S,
+    IDEAL_CLIP_MIN_S,
+    MAX_CLIP_S,
+    MAX_FIRST_THIRD_RATIO,
+    MAX_WINDOWS,
+    MIN_CLIP_GAP_S,
+    MIN_CLIP_S,
+    WEIGHT_AUDIO,
+    WEIGHT_HOOK,
+    WEIGHT_LLM,
+    WEIGHT_STANDALONE,
+    WINDOW_OVERLAP_S,
+    WINDOW_S,
+    calculate_clip_count,
+    get_settings,
+)
 from ..models import db
 from ..schemas.clip import ClipCandidate
 
-MIN_LEN, MAX_LEN = 15.0, 120.0
+SYSTEM_WINDOW_CLIPS = """You find short-video clips in a numbered transcript like [12] text. Choose runs of consecutive
+sentences (60-120 seconds long) that (a) open with a hook in the first sentence: a bold claim,
+question, surprise or strong emotion; (b) make sense with no earlier context; (c) end on a
+completed thought or punchline. Reject intros, sponsor reads, small talk, filler and rambling.
+Return JSON only: {"clips":[{"start_sentence":int,"end_sentence":int,"title":str (max 8 words),
+"hook_reason":str,"standalone":bool,"score":int 1-10}]}. Fewer is better than weak ones.
+10=exceptional, 7=good, 5 or below=skip."""
 
-SYSTEM = """You are an expert short-form video editor. Given a timestamped transcript, pick the best
-self-contained moments for short clips (strong hook, standalone, insightful/emotional/funny, complete thought).
-Avoid clips that start/end mid-sentence, need prior context, or are filler. Each clip must be 60-120 seconds and
-start/end on sentence boundaries using the timestamps given. Score 0-100 (estimated content quality, not virality).
-Reply with ONLY a JSON array, no prose, no markdown. Each item:
-{"start":float,"end":float,"title":str,"hook":str,"reason":str,"score":float,
-"category":"educational|funny|emotional|controversial|inspirational|storytelling|surprising|technical|opinion"}"""
+SYSTEM_METADATA = """You write YouTube Shorts metadata for a vertical video clip.
+Requirements:
+1. Title: max 90 characters, creates curiosity without lying about the content.
+2. Description: exactly 3 short lines summarizing the clip.
+3. Tags: an array of exactly 8 relevant tags (no '<' or '>', max 500 characters total).
+Return JSON only: {"title": str, "description": str, "tags": [str]}"""
+
+CLIPS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "clips": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start_sentence": {"type": "integer"},
+                    "end_sentence": {"type": "integer"},
+                    "title": {"type": "string"},
+                    "hook_reason": {"type": "string"},
+                    "standalone": {"type": "boolean"},
+                    "score": {"type": "integer"},
+                },
+                "required": ["start_sentence", "end_sentence", "title", "score"],
+            },
+        }
+    },
+    "required": ["clips"],
+}
+
+METADATA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "tags": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["title", "description", "tags"],
+}
 
 class AIError(RuntimeError):
     pass
 
 class AIProvider(ABC):
     @abstractmethod
-    def complete(self, system: str, user: str, format_schema: dict | None = None) -> str:
+    def complete(self, system: str, user: str, *args, **kwargs) -> str:
         ...
 
     def chat_with_retry(
@@ -87,7 +151,8 @@ class OllamaProvider(AIProvider):
             self.num_ctx = num_ctx or s.ollama_num_ctx
         self.base_url = (base_url or s.ollama_url).rstrip("/")
 
-    def complete(self, system: str, user: str, format_schema: dict | None = None) -> str:
+    def complete(self, system: str, user: str, *args, **kwargs) -> str:
+        format_schema = kwargs.get("format_schema")
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -133,7 +198,6 @@ class OllamaProvider(AIProvider):
             raise AIError(f"Failed to parse Ollama response: {e}") from e
 
     def unload(self) -> None:
-        """Unload the model from VRAM/RAM immediately."""
         url = f"{self.base_url}/api/chat"
         try:
             with httpx.Client(timeout=5.0) as client:
@@ -150,7 +214,7 @@ class OpenAIProvider(AIProvider):
         self.c = OpenAI(api_key=key)
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
-    def complete(self, system: str, user: str, format_schema: dict | None = None) -> str:
+    def complete(self, system: str, user: str, *args, **kwargs) -> str:
         r = self.c.chat.completions.create(
             model=self.model,
             temperature=0.3,
@@ -167,7 +231,7 @@ class AnthropicProvider(AIProvider):
         self.c = anthropic.Anthropic(api_key=key)
         self.model = model or os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 
-    def complete(self, system: str, user: str, format_schema: dict | None = None) -> str:
+    def complete(self, system: str, user: str, *args, **kwargs) -> str:
         r = self.c.messages.create(
             model=self.model,
             max_tokens=4000,
@@ -187,11 +251,430 @@ def get_provider(name: str | None = None) -> AIProvider:
     else:
         raise AIError(f"Unknown AI_PROVIDER '{provider_name}' (use ollama, openai, or anthropic)")
 
-def format_transcript(segments: list[dict]) -> str:
-    return "\n".join(f"[{s['start']:.1f}-{s['end']:.1f}] {s['text'].strip()}" for s in segments)
+# ----------------- Windowing and Heuristics -----------------
+
+SPONSOR_PATTERNS = [
+    r"\bsponsor",
+    r"\bsponsored by",
+    r"\bpatreon\b",
+    r"\bsubscribe\b",
+    r"\blink in (the )?description\b",
+    r"\buse code\b",
+    r"\bdiscount code\b",
+    r"\bmerch\b",
+    r"\bcheck out the link\b",
+]
+
+FILLER_STARTS = {"um", "uh", "so", "like", "well", "actually", "yeah", "okay", "alright"}
+
+HOOK_WORDS = {
+    "secret", "never", "why", "insane", "truth", "shocking", "best", "worst",
+    "unbelievable", "huge", "warning", "revealed", "finally", "crazy", "impossible"
+}
+
+def score_window_heuristic(window_sentences: list[dict[str, Any]]) -> float:
+    """Pre-score a sentence window: speech rate, questions, exclamations, minus sponsor penalty."""
+    if not window_sentences:
+        return 0.0
+
+    duration = max(1.0, window_sentences[-1]["end"] - window_sentences[0]["start"])
+    total_words = sum(len(s.get("words", [])) for s in window_sentences)
+    speech_rate = min(3.5, total_words / duration)
+
+    questions = sum(1 for s in window_sentences if s.get("text", "").strip().endswith("?"))
+    exclamations = sum(1 for s in window_sentences if s.get("text", "").strip().endswith("!"))
+
+    full_text = " ".join(s.get("text", "") for s in window_sentences).lower()
+    sponsor_hits = sum(1 for p in SPONSOR_PATTERNS if re.search(p, full_text))
+
+    score = (speech_rate * 2.0) + (questions * 1.5) + (exclamations * 1.0) - (sponsor_hits * 5.0)
+    return max(0.0, score)
+
+def build_windows(
+    sentences: list[dict[str, Any]],
+    window_s: int = WINDOW_S,
+    overlap_s: int = WINDOW_OVERLAP_S,
+    max_windows: int = MAX_WINDOWS,
+) -> list[list[dict[str, Any]]]:
+    """Slice sentences into overlapping time windows, pre-scoring to keep top max_windows."""
+    if not sentences:
+        return []
+
+    total_duration = sentences[-1]["end"]
+    step_s = max(30, window_s - overlap_s)
+    raw_windows: list[list[dict[str, Any]]] = []
+
+    t = 0.0
+    while t < total_duration:
+        w_end = t + window_s
+        w_sents = [s for s in sentences if s["start"] < w_end and s["end"] > t]
+        if w_sents:
+            raw_windows.append(w_sents)
+        t += step_s
+
+    if len(raw_windows) <= max_windows:
+        return raw_windows
+
+    # Pre-score and keep top max_windows, preserved in chronological order
+    scored = [(score_window_heuristic(w), idx, w) for idx, w in enumerate(raw_windows)]
+    scored.sort(key=lambda x: -x[0])
+    selected = scored[:max_windows]
+    selected.sort(key=lambda x: x[1])
+    return [item[2] for item in selected]
+
+# ----------------- Audio Energy and Features -----------------
+
+def compute_audio_features(wav_path: Path | None, start: float, end: float) -> tuple[float, float]:
+    """Calculate RMS energy and silence ratio from 16kHz mono WAV."""
+    if not wav_path or not wav_path.is_file():
+        return 0.5, 0.0
+
+    try:
+        with wave.open(str(wav_path), "rb") as wf:
+            rate = wf.getframerate()
+            start_frame = int(start * rate)
+            end_frame = int(end * rate)
+            n_frames = max(1, end_frame - start_frame)
+            wf.setpos(min(start_frame, max(0, wf.getnframes() - 1)))
+            raw = wf.readframes(n_frames)
+            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+            if len(samples) == 0:
+                return 0.5, 0.0
+            samples /= 32768.0
+            rms = float(np.sqrt(np.mean(samples**2)))
+            energy = min(1.0, rms * 5.0)
+            silence_ratio = float(np.mean(np.abs(samples) < 0.015))
+            return energy, silence_ratio
+    except Exception:
+        return 0.5, 0.0
+
+def compute_hook_features(first_sent_text: str, first_words: list[dict[str, Any]]) -> tuple[float, float]:
+    """Returns (hook_score, filler_penalty) for the first 3 seconds / first sentence."""
+    text_lower = first_sent_text.strip().lower()
+    score = 0.0
+
+    if "?" in text_lower:
+        score += 0.25
+    if re.search(r"\b\d+\b", text_lower):
+        score += 0.25
+    if re.search(r"\b(you|your|you're)\b", text_lower):
+        score += 0.25
+    if any(re.search(rf"\b{w}\b", text_lower) for w in HOOK_WORDS):
+        score += 0.25
+
+    # Check for leading filler words
+    filler_penalty = 0.0
+    if first_words:
+        first_w = re.sub(r"[^\w]", "", first_words[0]["word"]).lower()
+        if first_w in FILLER_STARTS:
+            filler_penalty = 0.15
+
+    return min(1.0, score), filler_penalty
+
+# ----------------- Candidate Extraction and Scoring -----------------
+
+def parse_window_candidates(
+    raw: str,
+    sentences_map: dict[int, dict[str, Any]],
+    min_len: float = MIN_CLIP_S,
+    max_len: float = MAX_CLIP_S,
+) -> list[dict[str, Any]]:
+    """Parse candidate clips from LLM window response, converting sentence indices to precise timestamps."""
+    m = re.search(r"\{.*\}", raw, re.S)
+    if not m:
+        raise AIError("Response contains no JSON object")
+
+    try:
+        data = json.loads(m.group(0))
+    except Exception as e:
+        raise AIError(f"Malformed JSON: {e}")
+
+    clips_data = data.get("clips", [])
+    if not isinstance(clips_data, list):
+        raise AIError("'clips' must be a list")
+
+    candidates: list[dict[str, Any]] = []
+
+    for it in clips_data:
+        try:
+            s_idx = int(it["start_sentence"])
+            e_idx = int(it["end_sentence"])
+            llm_score = float(it.get("score", 7))
+            title = str(it.get("title", ""))[:80]
+            hook_reason = str(it.get("hook_reason", ""))
+            standalone = bool(it.get("standalone", True))
+        except (KeyError, ValueError, TypeError):
+            continue
+
+        if s_idx not in sentences_map or e_idx not in sentences_map or e_idx < s_idx:
+            continue
+
+        s_sent = sentences_map[s_idx]
+        e_sent = sentences_map[e_idx]
+
+        if not s_sent.get("words") or not e_sent.get("words"):
+            continue
+
+        start_time = max(0.0, s_sent["words"][0]["start"] - 0.15)
+        end_time = e_sent["words"][-1]["end"] + 0.4
+        duration = end_time - start_time
+
+        if not (min_len <= duration <= max_len):
+            continue
+
+        # Collect text of the clip
+        clip_sents = [sentences_map[i] for i in range(s_idx, e_idx + 1) if i in sentences_map]
+        clip_text = " ".join(cs.get("text", "") for cs in clip_sents)
+        first_sent_text = s_sent.get("text", "")
+        first_words = s_sent.get("words", [])
+
+        candidates.append({
+            "start_sentence": s_idx,
+            "end_sentence": e_idx,
+            "start": round(start_time, 2),
+            "end": round(end_time, 2),
+            "duration": round(duration, 2),
+            "title": title,
+            "hook_reason": hook_reason,
+            "standalone": standalone,
+            "llm_score": llm_score,
+            "text": clip_text,
+            "first_sent_text": first_sent_text,
+            "first_words": first_words,
+        })
+
+    return candidates
+
+def score_clip(
+    candidate: dict[str, Any],
+    wav_path: Path | None = None,
+) -> float:
+    """Calculate final composite score (0-100 scale):
+
+    0.5*llm/10 + 0.2*audio_energy + 0.15*hook + 0.15*standalone
+    minus penalties for duration outside 75-100s, leading filler, silence > 25%.
+    """
+    llm_part = max(0.0, min(1.0, candidate["llm_score"] / 10.0))
+    energy, silence_ratio = compute_audio_features(wav_path, candidate["start"], candidate["end"])
+    hook_score, filler_penalty = compute_hook_features(candidate["first_sent_text"], candidate["first_words"])
+    standalone_score = 1.0 if candidate["standalone"] else 0.0
+
+    # Penalties
+    dur = candidate["duration"]
+    dur_penalty = 0.0
+    if dur < IDEAL_CLIP_MIN_S:
+        dur_penalty = (IDEAL_CLIP_MIN_S - dur) / IDEAL_CLIP_MIN_S * 0.15
+    elif dur > IDEAL_CLIP_MAX_S:
+        dur_penalty = (dur - IDEAL_CLIP_MAX_S) / (MAX_CLIP_S - IDEAL_CLIP_MAX_S) * 0.15
+
+    silence_penalty = 0.20 if silence_ratio > 0.25 else 0.0
+
+    final_val = (
+        WEIGHT_LLM * llm_part
+        + WEIGHT_AUDIO * energy
+        + WEIGHT_HOOK * hook_score
+        + WEIGHT_STANDALONE * standalone_score
+        - dur_penalty
+        - filler_penalty
+        - silence_penalty
+    )
+
+    final_val = max(0.0, min(1.0, final_val))
+    return round(final_val * 100.0, 1)
+
+def select_clips(
+    candidates: list[dict[str, Any]],
+    video_duration: float,
+    target_count: int,
+    min_gap_s: float = MIN_CLIP_GAP_S,
+    wav_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Greedy selection of non-overlapping clips sorted by final score descending."""
+    if not candidates:
+        return []
+
+    # Score each candidate
+    for c in candidates:
+        if "final_score" not in c:
+            c["final_score"] = score_clip(c, wav_path)
+
+    # Sort by final score descending FIRST
+    candidates.sort(key=lambda c: -c["final_score"])
+
+    first_third_limit = video_duration / 3.0 if video_duration > 0 else float("inf")
+    max_first_third = max(1, math.floor(target_count * MAX_FIRST_THIRD_RATIO))
+
+    def _try_select(allow_relax_first_third: bool, gap: float) -> list[dict[str, Any]]:
+        selected: list[dict[str, Any]] = []
+        first_third_count = 0
+
+        for c in candidates:
+            if len(selected) >= target_count:
+                break
+
+            in_first_third = c["start"] < first_third_limit
+            if in_first_third and not allow_relax_first_third and first_third_count >= max_first_third:
+                continue
+
+            # Check overlap with existing selected clips with minimum gap
+            has_overlap = any(
+                not (c["end"] + gap <= s["start"] or c["start"] >= s["end"] + gap)
+                for s in selected
+            )
+            if has_overlap:
+                continue
+
+            selected.append(c)
+            if in_first_third:
+                first_third_count += 1
+
+        return selected
+
+    # Round 1: strict first-third quota and full gap
+    selected = _try_select(allow_relax_first_third=False, gap=min_gap_s)
+
+    # Round 2: relax first-third quota if needed
+    if len(selected) < target_count:
+        selected = _try_select(allow_relax_first_third=True, gap=min_gap_s)
+
+    # Round 3: relax gap to 5s if still fewer
+    if len(selected) < target_count:
+        selected = _try_select(allow_relax_first_third=True, gap=max(3.0, min_gap_s / 2.0))
+
+    # Sort final selected clips chronologically for rendering and display
+    selected.sort(key=lambda c: c["start"])
+    return selected
+
+# ----------------- Metadata Generation -----------------
+
+class ClipMetaResponse(BaseModel):
+    title: str = Field(min_length=1, max_length=90)
+    description: str
+    tags: list[str]
+
+def generate_clip_metadata(
+    provider: AIProvider,
+    clip_text: str,
+    source_title: str = "",
+    channel_name: str = "",
+    video_url: str = "",
+    default_tags: list[str] | None = None,
+    default_hashtags: list[str] | None = None,
+    footer_template: str = DEFAULT_FOOTER_TEMPLATE,
+) -> dict[str, Any]:
+    """Generate title, 3-line description, and 8 tags for a clip using the local LLM."""
+    tags_list = default_tags or DEFAULT_TAGS
+    hashtags_list = default_hashtags or DEFAULT_HASHTAGS
+
+    prompt = f"VIDEO TITLE: {source_title}\nCHANNEL: {channel_name}\nCLIP TRANSCRIPT:\n{clip_text}"
+
+    def _validate(raw: str) -> dict[str, Any]:
+        m = re.search(r"\{.*\}", raw, re.S)
+        if not m:
+            raise ValueError("No JSON object found")
+        data = json.loads(m.group(0))
+        title = str(data.get("title", "")).strip().replace("\n", " ")[:90]
+        desc = str(data.get("description", "")).strip()
+        tags = [re.sub(r"[<>]", "", str(t)).strip() for t in data.get("tags", []) if str(t).strip()]
+        if not title:
+            raise ValueError("Missing title")
+        return {"title": title, "description": desc, "tags": tags[:8]}
+
+    try:
+        result = provider.chat_with_retry(
+            system=SYSTEM_METADATA,
+            user=prompt,
+            validator=_validate,
+            format_schema=METADATA_SCHEMA,
+            max_retries=3,
+        )
+    except Exception:
+        # Fallback metadata template
+        fallback_title = clip_text[:80].strip() or "Interesting Moment"
+        fallback_desc = f"Key moment from {source_title or 'the video'}.\nWatch the full context.\nSubscribe for more daily clips!"
+        result = {
+            "title": fallback_title[:90],
+            "description": fallback_desc,
+            "tags": tags_list[:8],
+        }
+
+    # Format description footer
+    footer = footer_template.format(
+        source_title=source_title or "Original Video",
+        channel=channel_name or "Creator",
+        source_url=video_url or "",
+    )
+    hashtags_str = " ".join(hashtags_list)
+    full_description = f"{result['description']}\n\n{footer}\n\n{hashtags_str}".strip()
+
+    # Ensure tags are formatted cleanly
+    tags_final = result.get("tags") or tags_list[:8]
+    if len(tags_final) < 8:
+        for t in tags_list:
+            if t not in tags_final:
+                tags_final.append(t)
+            if len(tags_final) == 8:
+                break
+
+    tags_clean = [t.replace("<", "").replace(">", "").strip() for t in tags_final[:8]]
+
+    return {
+        "title": result["title"][:90],
+        "description": full_description,
+        "tags": ", ".join(tags_clean)[:490],
+    }
+
+# ----------------- Full Pipeline Clip Detection -----------------
+
+def detect_clips_windowed(
+    provider: AIProvider,
+    sentences: list[dict[str, Any]],
+    duration: float,
+    target_count: int,
+    wav_path: Path | None = None,
+    min_clip_s: int = MIN_CLIP_S,
+    max_clip_s: int = MAX_CLIP_S,
+) -> list[dict[str, Any]]:
+    """Execute windowed clip candidate extraction and greedy scoring selection."""
+    if not sentences:
+        return []
+
+    windows = build_windows(sentences)
+    all_candidates: list[dict[str, Any]] = []
+    seen_ranges: set[tuple[int, int]] = set()
+
+    for w_sents in windows:
+        s_map = {s["i"]: s for s in w_sents}
+        prompt_text = "\n".join(f"[{s['i']}] {s['text']}" for s in w_sents)
+        user_prompt = f"Find up to 3 short clips in this transcript segment:\n\n{prompt_text}"
+
+        def _val(raw: str) -> list[dict[str, Any]]:
+            return parse_window_candidates(raw, s_map, min_len=min_clip_s, max_len=max_clip_s)
+
+        try:
+            window_cands = provider.chat_with_retry(
+                system=SYSTEM_WINDOW_CLIPS,
+                user=user_prompt,
+                validator=_val,
+                format_schema=CLIPS_SCHEMA,
+                max_retries=3,
+            )
+            for c in window_cands:
+                key = (c["start_sentence"], c["end_sentence"])
+                if key not in seen_ranges:
+                    seen_ranges.add(key)
+                    all_candidates.append(c)
+        except Exception:
+            continue
+
+    selected = select_clips(all_candidates, duration, target_count, wav_path=wav_path)
+    return selected
+
+# Backward compatibility helper
+MIN_LEN = 15.0
+MAX_LEN = 120.0
 
 def parse_candidates(raw: str, duration: float) -> list[ClipCandidate]:
-    """Extract JSON array, validate each item, drop invalid ones. Raises AIError if nothing usable."""
     m = re.search(r"\[.*\]", raw, re.S)
     if not m:
         raise AIError("AI response contained no JSON array")
@@ -208,11 +691,10 @@ def parse_candidates(raw: str, duration: float) -> list[ClipCandidate]:
             c = ClipCandidate.model_validate(it)
         except ValidationError:
             continue
-        if c.end > duration or not (MIN_LEN <= c.end - c.start <= MAX_LEN):
+        if c.end > duration or not (15.0 <= c.end - c.start <= MAX_LEN):
             continue
         valid_candidates.append(c)
 
-    # Sort by score descending FIRST (fixes overlap bug)
     valid_candidates.sort(key=lambda c: -c.score)
     out: list[ClipCandidate] = []
     for c in valid_candidates:
@@ -224,11 +706,14 @@ def parse_candidates(raw: str, duration: float) -> list[ClipCandidate]:
         raise AIError("AI returned no valid clip candidates")
     return out
 
+def format_transcript(segments: list[dict]) -> str:
+    return "\n".join(f"[{s['start']:.1f}-{s['end']:.1f}] {s['text'].strip()}" for s in segments)
+
 def detect_clips(provider: AIProvider, segments: list[dict], duration: float, retries: int = 3) -> list[ClipCandidate]:
     n = max(3, min(10, int(duration // 120) + 3))
     user = f"Video duration: {duration:.0f}s. Return up to {n} clips.\n\nTRANSCRIPT:\n{format_transcript(segments)}"
     return provider.chat_with_retry(
-        system=SYSTEM,
+        system=SYSTEM_WINDOW_CLIPS,
         user=user,
         validator=lambda raw: parse_candidates(raw, duration)[:n],
         max_retries=retries,

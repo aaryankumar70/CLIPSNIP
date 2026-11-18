@@ -23,9 +23,18 @@ DEFAULT_DOWNLOAD_QUALITY: str = "720p"
 DEFAULT_CAPTION_LANGUAGE: str = "en"
 DEFAULT_UPLOAD_PRIVACY: str = "public"
 DEFAULT_SPREAD_MINUTES: int = 60
+DEFAULT_TAGS: list[str] = ["gaming", "gta6", "shorts", "gamingclips"]
+DEFAULT_HASHTAGS: list[str] = ["#gaming", "#shorts"]
 DEFAULT_FOOTER_TEMPLATE: str = "Clipped from {source_title} by {channel} - {source_url}"
 DEFAULT_DELETE_SOURCE_AFTER_RENDER: bool = False
 DEFAULT_LAN_MODE: bool = False
+
+WEIGHT_LLM: float = 0.50
+WEIGHT_AUDIO: float = 0.20
+WEIGHT_HOOK: float = 0.15
+WEIGHT_STANDALONE: float = 0.15
+MIN_CLIP_GAP_S: float = 10.0
+MAX_FIRST_THIRD_RATIO: float = 0.40
 
 def calculate_clip_count(video_seconds: float, override_max: int | None = None) -> int:
     video_minutes = max(0.0, video_seconds) / 60.0

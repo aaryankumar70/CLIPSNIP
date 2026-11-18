@@ -78,3 +78,36 @@
 - Deno is used automatically by yt-dlp when installed for JavaScript extraction.
 - Auto-captions in json3 format are preferred for speed and CPU resource conservation over full Whisper inference.
 - `TEST_VIDEO_URL` in `CLIPPER_BUILD_PLAN.md` was not set, so tests ran against synthetic/mocked data.
+
+## Step 3: Clip Selection and Metadata Generation
+
+### Changes Made
+- Implemented windowing in `backend/app/providers/ai.py` (`build_windows`):
+  - Slices numbered sentences into 300s (`WINDOW_S`) windows with 30s (`WINDOW_OVERLAP_S`) overlap.
+  - Pre-scores windows with heuristic (speech rate, questions, exclamations, sponsor penalties) to select the top 12 windows (`MAX_WINDOWS`).
+- Local LLM candidate prompt & schema:
+  - Prompts Ollama with sentence indices `[i] text` and receives structured JSON `{start_sentence, end_sentence, title, hook_reason, standalone, score}`.
+  - Converts indices to timestamps with exact padding: `start = first_word.start - 0.15s`, `end = last_word.end + 0.4s`.
+  - Filters candidates by duration `MIN_CLIP_S` (60s) to `MAX_CLIP_S` (120s).
+- Implemented `select_clips()`:
+  - Calculates composite final score: `0.5*llm + 0.2*audio_energy + 0.15*hook + 0.15*standalone - penalties` (duration outside 75-100s, filler starts, silence > 25%).
+  - Audio energy evaluated via RMS on 16kHz mono WAV using numpy and wave.
+  - Hook text features extracted from the first 3 seconds / first sentence.
+  - Sorts by final score descending first, resolving the earlier overlap bug.
+  - Enforces minimum 10s gap between clips and limits first-third of video to at most 40% of clips.
+- Implemented `generate_clip_metadata()`:
+  - Generates curiosity-driven title (max 90 chars), 3-line description, and 8 tags (under 500 chars, no `<` or `>`).
+  - Appends settings footer template (`Clipped from {source_title} by {channel} - {source_url}`) and hashtags.
+  - Provides fallback metadata if LLM fails.
+  - Stored on `clips` table row (`title`, `description`, `tags`) and editable via `PATCH /api/clips/{id}`.
+- Updated `backend/app/workers/pipeline.py` to run windowed clip detection, metadata generation, and automatic model unloads.
+- Added tests in `backend/tests/test_step3_selection_metadata.py`.
+
+### Synthetic Transcript Verification Results
+Running clip selection on a 600-second synthetic transcript generated the following candidate rankings:
+1. Clip: "Strong Revelation" [70.0s - 150.0s, duration 80.0s] — Composite Score: 92.0
+2. Clip: "Other Insights" [200.0s - 280.0s, duration 80.0s] — Composite Score: 80.0
+*(Weak candidate at 50.0s - 130.0s with score 55.0 overlapping Clip 1 was correctly rejected, confirming overlap resolution)*
+
+### How to Try It
+- Run tests: `.venv/bin/pytest backend/tests/test_step3_selection_metadata.py`
