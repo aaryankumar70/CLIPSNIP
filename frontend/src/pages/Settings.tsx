@@ -1,16 +1,24 @@
 import { useEffect, useState } from "react";
-import { Save, AlertTriangle, Cpu, Film, Tag, Upload, HardDrive, Wifi } from "lucide-react";
+import { Save, AlertTriangle, Cpu, Film, Tag, Upload, HardDrive, Wifi, Youtube, CheckCircle2, AlertCircle, Loader2, ExternalLink } from "lucide-react";
 import { api } from "../services/api";
 import { useToast } from "../context/ToastContext";
-import type { AppSettings } from "../types";
+import type { AppSettings, YouTubeStatus } from "../types";
 
 export default function Settings() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [ytStatus, setYtStatus] = useState<YouTubeStatus | null>(null);
+  const [authorizingYt, setAuthorizingYt] = useState(false);
   const [tagsStr, setTagsStr] = useState("");
   const [hashtagsStr, setHashtagsStr] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  const loadYtStatus = () => {
+    api.youtubeStatus()
+      .then(setYtStatus)
+      .catch(() => {});
+  };
 
   useEffect(() => {
     api.getSettings()
@@ -21,7 +29,50 @@ export default function Settings() {
       })
       .catch(e => toast.error(`Failed to load settings: ${e.message}`))
       .finally(() => setLoading(false));
+
+    loadYtStatus();
   }, []);
+
+  const handleConnectYouTube = async () => {
+    try {
+      setAuthorizingYt(true);
+      toast.info("Starting YouTube authorization...");
+      const res = await api.youtubeConnect();
+      if (res.auth_url) {
+        window.open(res.auth_url, "_blank");
+        toast.info("Opened authorization window. Please grant permissions and return here.");
+      }
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const s = await api.youtubeStatus();
+          setYtStatus(s);
+          if (s.authenticated) {
+            clearInterval(interval);
+            setAuthorizingYt(false);
+            toast.success("Successfully connected to YouTube!");
+          } else if (attempts > 60) {
+            clearInterval(interval);
+            setAuthorizingYt(false);
+          }
+        } catch {}
+      }, 2000);
+    } catch (e) {
+      setAuthorizingYt(false);
+      toast.error((e as Error).message);
+    }
+  };
+
+  const handleDisconnectYouTube = async () => {
+    try {
+      await api.youtubeDisconnect();
+      toast.info("Disconnected YouTube channel");
+      loadYtStatus();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -270,12 +321,78 @@ export default function Settings() {
           </div>
         </div>
 
-        {/* YouTube Upload Defaults */}
+        {/* YouTube Upload Defaults & Channel Authorization */}
         <div className="panel p-5">
-          <div className="mb-4 flex items-center gap-2 text-white font-medium">
-            <Upload size={18} className="text-accent" />
-            <span>YouTube Upload Defaults</span>
+          <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-white font-medium">
+              <Youtube size={20} className="text-red-500" />
+              <span>YouTube Channel & Upload Defaults</span>
+            </div>
+            {ytStatus?.authenticated ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <CheckCircle2 size={12} /> Connected
+              </span>
+            ) : ytStatus?.has_client_secret ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                Credentials Ready
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
+                Not Connected
+              </span>
+            )}
           </div>
+
+          {/* YouTube Authorization Action Card */}
+          <div className="p-4 mb-5 rounded-xl border border-line bg-black/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <p className="text-xs text-zinc-200 font-semibold">
+                {ytStatus?.authenticated
+                  ? "Authorized via Google OAuth (Desktop App)"
+                  : ytStatus?.has_client_secret
+                  ? "Google OAuth client credentials detected in storage/"
+                  : "Client secret file missing in storage/client_secret.json"}
+              </p>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                {ytStatus?.authenticated
+                  ? "Direct uploads and spread scheduling are ready for use."
+                  : ytStatus?.has_client_secret
+                  ? "Click Authorize to connect your channel and grant upload permissions."
+                  : "Create Desktop App credentials in Google Cloud Console and save as storage/client_secret.json."}
+              </p>
+            </div>
+            <div className="shrink-0">
+              {ytStatus?.authenticated ? (
+                <button
+                  type="button"
+                  onClick={handleDisconnectYouTube}
+                  className="btn btn-ghost text-xs text-zinc-400 hover:text-red-400"
+                >
+                  Disconnect
+                </button>
+              ) : ytStatus?.has_client_secret ? (
+                <button
+                  type="button"
+                  onClick={handleConnectYouTube}
+                  disabled={authorizingYt}
+                  className="btn btn-primary text-xs flex items-center gap-2 shadow-lg shadow-red-500/20"
+                >
+                  {authorizingYt ? <Loader2 size={14} className="animate-spin" /> : <Youtube size={14} />}
+                  {authorizingYt ? "Authorizing..." : "Authorize YouTube Channel"}
+                </button>
+              ) : (
+                <a
+                  href="https://console.cloud.google.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-ghost text-xs text-zinc-400 hover:text-white inline-flex items-center gap-1"
+                >
+                  Setup Guide <ExternalLink size={12} />
+                </a>
+              )}
+            </div>
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-medium text-zinc-400 mb-1">Default Privacy Status</label>

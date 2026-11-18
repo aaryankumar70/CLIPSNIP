@@ -99,16 +99,54 @@ def start_oauth_flow() -> dict[str, Any]:
             "storage/client_secret.json is missing. Please create OAuth client ID credentials (Desktop app) in Google Cloud Console."
         )
 
-    from google_auth_oauthlib.flow import InstalledAppFlow
+    import webbrowser
+    import wsgiref.simple_server
+    from google_auth_oauthlib.flow import (
+        InstalledAppFlow,
+        _RedirectWSGIApp,
+        _ExclusiveWSGIServer,
+        _WSGIRequestHandler,
+    )
 
     flow = InstalledAppFlow.from_client_secrets_file(str(cs_path), SCOPES)
-    # Run local server on an available port
-    creds = flow.run_local_server(port=0, open_browser=True)
-    t_path = get_token_path()
-    t_path.parent.mkdir(parents=True, exist_ok=True)
-    t_path.write_text(creds.to_json(), encoding="utf-8")
+    wsgi_app = _RedirectWSGIApp("ClipSnip authorization complete! You may return to the dashboard.")
+    local_server = wsgiref.simple_server.make_server(
+        "localhost",
+        0,
+        wsgi_app,
+        server_class=_ExclusiveWSGIServer,
+        handler_class=_WSGIRequestHandler,
+    )
 
-    return {"status": "authenticated"}
+    port = local_server.server_port
+    flow.redirect_uri = f"http://localhost:{port}/"
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+
+    def _listen():
+        try:
+            local_server.timeout = 300
+            local_server.handle_request()
+            try:
+                auth_resp = wsgi_app.last_request_uri.replace("http", "https")
+                flow.fetch_token(authorization_response=auth_resp)
+                creds = flow.credentials
+                t_path = get_token_path()
+                t_path.parent.mkdir(parents=True, exist_ok=True)
+                t_path.write_text(creds.to_json(), encoding="utf-8")
+            except Exception as e:
+                print(f"OAuth token fetch error: {e}")
+        finally:
+            local_server.server_close()
+
+    t = threading.Thread(target=_listen, daemon=True)
+    t.start()
+
+    try:
+        webbrowser.open(auth_url)
+    except Exception:
+        pass
+
+    return {"status": "authorizing", "auth_url": auth_url}
 
 def disconnect_youtube() -> dict[str, Any]:
     t_path = get_token_path()

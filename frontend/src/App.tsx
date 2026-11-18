@@ -5,7 +5,7 @@ import Project from "./pages/Project";
 import Settings from "./pages/Settings";
 import { ToastProvider, useToast } from "./context/ToastContext";
 import { api } from "./services/api";
-import type { HealthStatus } from "./types";
+import type { HealthStatus, YouTubeStatus } from "./types";
 
 const useHash = () => {
   const [h, setH] = useState(location.hash || "#/");
@@ -21,14 +21,19 @@ function MainLayout() {
   const hash = useHash();
   const m = hash.match(/^#\/project\/([a-zA-Z0-9_-]+)/);
   const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [ytStatus, setYtStatus] = useState<YouTubeStatus | null>(null);
   const [dismissHealth, setDismissHealth] = useState(false);
   const [checkingHealth, setCheckingHealth] = useState(false);
 
   const checkHealth = async () => {
     setCheckingHealth(true);
     try {
-      const h = await api.health();
+      const [h, yt] = await Promise.all([
+        api.health().catch(() => ({ ok: false, warnings: ["Backend server is unreachable"] })),
+        api.youtubeStatus().catch(() => null),
+      ]);
       setHealth(h);
+      if (yt) setYtStatus(yt);
     } catch {
       setHealth({ ok: false, warnings: ["Backend server is unreachable"] });
     } finally {
@@ -100,6 +105,38 @@ function MainLayout() {
         </nav>
 
         <div className="hidden md:block mt-auto pt-6 border-t border-line/60 text-xs text-zinc-500">
+          {/* YouTube Channel status */}
+          <div className="mb-3 pb-3 border-b border-line/40">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-medium text-zinc-400">YouTube Studio</span>
+              {ytStatus?.authenticated ? (
+                <span className="text-[10px] text-emerald-400 font-semibold uppercase">Linked</span>
+              ) : ytStatus?.has_client_secret ? (
+                <span className="text-[10px] text-blue-400 font-semibold uppercase">Ready</span>
+              ) : (
+                <span className="text-[10px] text-zinc-500 font-semibold uppercase">No Key</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  ytStatus?.authenticated
+                    ? "bg-emerald-500"
+                    : ytStatus?.has_client_secret
+                    ? "bg-blue-500"
+                    : "bg-zinc-600"
+                }`}
+              />
+              <span className="text-zinc-400">
+                {ytStatus?.authenticated
+                  ? "Connected"
+                  : ytStatus?.has_client_secret
+                  ? "Authorize on Dashboard"
+                  : "Needs client_secret.json"}
+              </span>
+            </div>
+          </div>
+
           <div className="flex items-center justify-between mb-1">
             <span>System Status</span>
             <button

@@ -49,7 +49,7 @@ export const api = {
 
   // YouTube OAuth & Uploads
   youtubeStatus: () => fetch("/api/youtube/status").then(j<YouTubeStatus>),
-  youtubeConnect: () => fetch("/api/youtube/connect", { method: "POST" }).then(j<{ status: string }>),
+  youtubeConnect: () => fetch("/api/youtube/connect", { method: "POST" }).then(j<{ status: string; auth_url?: string }>),
   youtubeDisconnect: () => fetch("/api/youtube/disconnect", { method: "POST" }).then(j<{ authenticated: boolean }>),
   uploadClip: (cid: string, body?: { privacy_status?: string; publish_at?: string }) =>
     fetch(`/api/clips/${cid}/upload`, {

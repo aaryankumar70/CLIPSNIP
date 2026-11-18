@@ -114,10 +114,28 @@ export default function Project({ id }: { id: string }) {
 
   const handleConnectYouTube = async () => {
     try {
-      toast.info("Opening browser for Google OAuth authorization...");
-      await api.youtubeConnect();
-      toast.success("Connected to YouTube!");
-      loadYtStatus();
+      toast.info("Starting YouTube authorization...");
+      const res = await api.youtubeConnect();
+      if (res.auth_url) {
+        window.open(res.auth_url, "_blank");
+        toast.info("Opened authorization window. Please grant permissions and return here.");
+      }
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const s = await api.youtubeStatus();
+          setYtStatus(s);
+          if (s.authenticated) {
+            clearInterval(interval);
+            toast.success("Successfully connected to YouTube!");
+          } else if (attempts > 60) {
+            clearInterval(interval);
+          }
+        } catch {
+          // ignore transient poll error
+        }
+      }, 2000);
     } catch (e) {
       toast.error((e as Error).message);
     }

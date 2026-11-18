@@ -11,16 +11,19 @@ import {
   AlertCircle,
   Loader2,
   Film,
+  Youtube,
 } from "lucide-react";
 import { api } from "../services/api";
 import { useToast } from "../context/ToastContext";
-import { fmt, type Job } from "../types";
+import { fmt, type Job, type YouTubeStatus } from "../types";
 
 export default function Home() {
   const { toast } = useToast();
   const [urls, setUrls] = useState("");
   const [busy, setBusy] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [ytStatus, setYtStatus] = useState<YouTubeStatus | null>(null);
+  const [authorizingYt, setAuthorizingYt] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadJobs = () => {
@@ -29,11 +32,64 @@ export default function Home() {
       .catch(() => {});
   };
 
+  const loadYtStatus = () => {
+    api.youtubeStatus()
+      .then(setYtStatus)
+      .catch(() => {});
+  };
+
   useEffect(() => {
     loadJobs();
-    const interval = setInterval(loadJobs, 3000);
+    loadYtStatus();
+    const interval = setInterval(() => {
+      loadJobs();
+      loadYtStatus();
+    }, 3000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleConnectYouTube = async () => {
+    try {
+      setAuthorizingYt(true);
+      toast.info("Starting YouTube authorization...");
+      const res = await api.youtubeConnect();
+      if (res.auth_url) {
+        window.open(res.auth_url, "_blank");
+        toast.info("Opened authorization window. Please grant permissions and return here.");
+      }
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const s = await api.youtubeStatus();
+          setYtStatus(s);
+          if (s.authenticated) {
+            clearInterval(interval);
+            setAuthorizingYt(false);
+            toast.success("Successfully connected to YouTube!");
+          } else if (attempts > 60) {
+            clearInterval(interval);
+            setAuthorizingYt(false);
+          }
+        } catch {
+          // ignore transient poll error
+        }
+      }, 2000);
+    } catch (e) {
+      setAuthorizingYt(false);
+      toast.error((e as Error).message);
+    }
+  };
+
+  const handleDisconnectYouTube = async () => {
+    try {
+      await api.youtubeDisconnect();
+      toast.info("Disconnected YouTube channel");
+      loadYtStatus();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   const handleStartUrls = async () => {
     const trimmed = urls.trim();
@@ -160,6 +216,79 @@ export default function Home() {
           Paste YouTube links from creators who allow clipping. ClipSnip transcribes speech, selects viral hooks, burns in
           word-level captions, and queues YouTube Shorts.
         </p>
+      </div>
+
+      {/* YouTube Channel Authorization Card */}
+      <div className="panel p-5 mb-6 border-line bg-panel/70 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="p-2.5 rounded-xl bg-red-500/10 text-red-500 border border-red-500/20">
+            <Youtube size={26} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-white">YouTube Upload Studio</h3>
+              {ytStatus?.authenticated ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  <CheckCircle2 size={12} /> Connected
+                </span>
+              ) : ytStatus?.reconnect_needed ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                  <AlertCircle size={12} /> OAuth Token Expired
+                </span>
+              ) : ytStatus?.has_client_secret ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                  Credentials Ready
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-500/15 text-zinc-400 border border-zinc-500/30">
+                  No Credentials Found
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-zinc-400">
+              {ytStatus?.authenticated
+                ? "Your YouTube channel is authorized. You can publish clips directly as Shorts."
+                : ytStatus?.reconnect_needed
+                ? "Your 7-day Google Cloud testing token expired. Click to re-authorize."
+                : ytStatus?.has_client_secret
+                ? "client_secret.json found in storage/. Authorize ClipSnip to upload to your channel."
+                : "Place storage/client_secret.json to connect your YouTube channel for auto-uploads."}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {ytStatus?.authenticated ? (
+            <button
+              onClick={handleDisconnectYouTube}
+              className="btn btn-ghost text-xs text-zinc-400 hover:text-red-400"
+            >
+              Disconnect
+            </button>
+          ) : ytStatus?.has_client_secret ? (
+            <button
+              onClick={handleConnectYouTube}
+              disabled={authorizingYt}
+              className="btn btn-primary text-xs flex items-center gap-2 shadow-lg shadow-red-500/20"
+            >
+              {authorizingYt ? <Loader2 size={14} className="animate-spin" /> : <Youtube size={14} />}
+              {authorizingYt
+                ? "Waiting for Approval..."
+                : ytStatus?.reconnect_needed
+                ? "Re-authorize YouTube"
+                : "Authorize YouTube Channel"}
+            </button>
+          ) : (
+            <a
+              href="https://console.cloud.google.com/"
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-ghost text-xs text-zinc-400 hover:text-white inline-flex items-center gap-1.5"
+            >
+              Setup Guide <ExternalLink size={12} />
+            </a>
+          )}
+        </div>
       </div>
 
       {/* Main Ingest Panel */}

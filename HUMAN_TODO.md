@@ -6,18 +6,8 @@ List of actions required from the human user. Ordered by importance, with exact 
   - Ollama installed to `~/.local/bin/ollama` and running via `systemctl --user enable --now ollama.service`.
   - Model `qwen2.5:3b-instruct` pulled and ready.
 
-- [ ] **2. Google Cloud Setup for YouTube Uploads** (requires browser login):
-  1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project.
-  2. Enable the **YouTube Data API v3** in APIs & Services.
-  3. Configure OAuth consent screen:
-     - User Type: **External**
-     - Publishing status: Leave in **Testing**
-     - Test users: Add your personal Google / YouTube account email.
-  4. Create Credentials:
-     - Click **Create Credentials** → **OAuth client ID**.
-     - Application type: **Desktop app**.
-     - Download the JSON client secret file and save it to:
-       `/home/ryu/Projects/ClipSnip/storage/client_secret.json`
+- [x] **2. Google Cloud Setup for YouTube Uploads**:
+  - Saved OAuth client secrets to `/home/ryu/Projects/ClipSnip/storage/client_secret.json`.
 
 - [ ] **3. Connect YouTube Channel in Dashboard**:
   - Start the app with `./start.sh` and open `http://localhost:8000`.
