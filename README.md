@@ -1,79 +1,125 @@
-# Clipper — AI video clipping studio (personal use)
+# ClipSnip — Local AI Video Clipping Studio
 
-Upload a video you own or are authorized to process; Clipper transcribes it (faster-whisper), asks an LLM for the best
-self-contained moments, cuts them with FFmpeg, burns in word-synced captions, and lets you preview, trim, re-style and download MP4s.
+ClipSnip is a personal tool built for Linux laptops (Arch / Omarchy, 4-core i7, 8 GB RAM, integrated graphics). Paste YouTube video URLs (from creators who allow clipping), and ClipSnip automatically transcribes the audio, detects the best 10–15 moments (60–120s vertical 9:16 clips), burns in word-synchronized animated captions, generates SEO titles/descriptions/tags, and uploads or schedules them to your YouTube channel.
 
-## Features
-- Real job pipeline with live progress: ingest → audio → transcription → AI analysis → clips → captions → render
-- Local-first & zero-cost AI: Ollama (`qwen2.5:3b-instruct`) and faster-whisper (`base.en`), designed for local Linux laptops with no paid APIs
-- Word-level captions in 5 styles (classic, bold, highlight, creator, minimal) or off, rendered as ASS via FFmpeg
-- Formats: 9:16 vertical clips with `blur_fit` (blurred background) or `center_crop`
-- Dynamic settings management via `/api/settings` and persistent SQLite configuration
-- Automatic clip detection, sentence-boundary snapping, audio energy scoring, and metadata generation
-- YouTube Shorts direct upload and spread-publishing via YouTube Data API v3
+**Zero paid cloud APIs. Zero subscriptions.** Runs 100% locally using `faster-whisper`, `Ollama`, `FFmpeg`, and `yt-dlp`.
 
-## Architecture
-`frontend/` React+Vite+TS+Tailwind · `backend/app/` FastAPI (`api/` routes, `services/` ffmpeg/captions/ingest/transcribe,
-`providers/` AI, `workers/` pipeline, `models/` SQLite) · `storage/` uploads, audio, transcripts, rendered, thumbnails.
-Jobs run one at a time on a background thread; the UI polls `/api/jobs/{id}`.
+---
 
-## Requirements
-Python 3.10+, Node 18+, FFmpeg (with libass, included in standard builds), an OpenAI or Anthropic API key.
+## Hardware & System Requirements
 
-## Installation (Windows)
-1. **FFmpeg:** `winget install Gyan.FFmpeg` (or download from ffmpeg.org and add `bin` to PATH). Check: `ffmpeg -version`.
-2. **Backend:**
-   ```powershell
-   cd backend
-   python -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   copy ..\.env.example ..\.env   # then edit .env: set the API key
+- **Operating System:** Linux (Arch Linux / Omarchy recommended)
+- **CPU:** 4-core Intel/AMD x86_64
+- **RAM:** 8 GB RAM (Whisper, Ollama, and FFmpeg execute in strictly sequential stages and automatically unload from memory)
+- **GPU:** None required (CPU int8 Whisper and software FFmpeg encoding)
+- **Disk:** At least 5 GB free disk space
+
+### Arch Linux System Packages
+Install FFmpeg, Node.js, and Ollama:
+```bash
+sudo pacman -S ffmpeg nodejs npm ollama
+```
+
+### Pull Ollama Model
+Start Ollama and download the instruction-tuned model:
+```bash
+systemctl --user enable --now ollama
+ollama pull qwen2.5:3b-instruct
+```
+
+---
+
+## Quick Start (One Command)
+
+From the project root:
+```bash
+./start.sh
+```
+`start.sh` automatically:
+1. Verifies prerequisites (FFmpeg, Ollama, yt-dlp, uv/python3).
+2. Creates the Python 3.12 virtual environment (`.venv`) and installs all dependencies.
+3. Builds the production frontend (`frontend/dist`) if not already built.
+4. Starts the unified FastAPI server on `http://127.0.0.1:8000` (serving both backend API and frontend SPA).
+5. Opens `http://localhost:8000` in your default browser.
+
+---
+
+## Systemd User Service (Auto-Start at Boot)
+
+To run ClipSnip continuously in the background and restart automatically on failure:
+
+1. Copy the provided user service unit:
+   ```bash
+   mkdir -p ~/.config/systemd/user
+   cp clipper.service ~/.config/systemd/user/
+   systemctl --user daemon-reload
    ```
-3. **Frontend:** `cd frontend && npm install`
 
-Linux/macOS: same steps with `source .venv/bin/activate`, `cp`, and `sudo apt install ffmpeg` (or `brew install ffmpeg`).
+2. Enable and start the service:
+   ```bash
+   systemctl --user enable --now clipper.service
+   ```
 
-## Environment variables (`.env` in project root)
-`AI_PROVIDER` (openai|anthropic), `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `WHISPER_MODEL` (tiny…large-v3; `small` is a good CPU default),
-`WHISPER_DEVICE` (auto|cpu|cuda), `FFMPEG_PATH`, `FFPROBE_PATH`, `STORAGE_PATH`, `MAX_VIDEO_SIZE` (bytes). Optional: `OPENAI_MODEL`, `ANTHROPIC_MODEL`.
-Never commit `.env`. Load it before starting the backend: in PowerShell run `Get-Content ..\.env | % { if ($_ -match '^\s*([^#=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1].Trim(), ($matches[2] -replace '\s+#.*$','').Trim()) } }`, or use `uvicorn ... --env-file ../.env`.
+3. Check service status:
+   ```bash
+   systemctl --user status clipper.service
+   ```
 
-## Running
-```powershell
-# terminal 1
-cd backend; uvicorn app.main:app --reload --env-file ../.env
-# terminal 2
-cd frontend; npm run dev        # open http://localhost:5173
-```
-Or `docker compose up --build` (CPU only).
+4. View live logs:
+   ```bash
+   journalctl --user -u clipper.service -f
+   ```
 
-## Tests
-```powershell
-cd backend
-python tests\test_media.py   # FFmpeg/captions/ingest (needs only FFmpeg)
-pytest                                  # everything incl. AI validation and API (needs requirements.txt)
-python ..\scripts\make_sample.py        # makes storage/sample.mp4 (20s) for manual end-to-end runs
-```
+---
 
-## Troubleshooting
-- *"ffmpeg not found"*: set `FFMPEG_PATH` to the full path of ffmpeg.exe.
-- *"Whisper model could not be loaded"*: first run downloads the model (needs internet); try `WHISPER_MODEL=base`.
-- *"AI_PROVIDER key not set"*: check `.env` and that it was loaded into the backend's environment.
-- *Captions missing*: ensure your FFmpeg build has `libass` (`ffmpeg -filters | findstr subtitles`).
-- A sample test video has no speech, so full pipeline runs need a video with real talking.
-- Jobs interrupted by a server restart are marked failed; re-upload to retry.
+## YouTube Upload Integration (Google OAuth Desktop App)
 
-## Google Cloud YouTube Setup
-To enable YouTube Shorts direct upload and spread-publishing:
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project.
-2. Under **APIs & Services**, enable the **YouTube Data API v3**.
-3. Configure the **OAuth consent screen**:
+ClipSnip can directly upload rendered clips to your YouTube channel as Shorts and spread publications over time.
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a project and enable the **YouTube Data API v3**.
+3. Configure the **OAuth Consent Screen**:
    - User Type: **External**
-   - Publishing Status: Leave in **Testing**
-   - Test users: Add your YouTube Google account email address.
-4. Create Credentials:
-   - Click **Create Credentials** -> **OAuth client ID**.
-   - Application type: **Desktop app**.
-   - Download the client secret JSON file and save it to `storage/client_secret.json`.
-5. Connect in the Clipper dashboard: Click "Connect YouTube" and allow access in the browser. (Note: in Testing mode, refresh tokens expire every 7 days; click "Reconnect YouTube" when prompted).
+   - Publishing status: **Testing**
+   - Add your Google account email under **Test Users**.
+4. Create **Credentials** → **OAuth client ID** → Application type: **Desktop App**.
+5. Download the JSON credentials file and save it to:
+   ```bash
+   storage/client_secret.json
+   ```
+6. In the ClipSnip UI, click **Connect YouTube** to authorize your channel.
+
+---
+
+## LAN Mode (Access from Local Network)
+
+To access ClipSnip from your phone or another computer on the same Wi-Fi:
+
+1. Enable **LAN Mode** in **Settings** (`#/settings`), or start with:
+   ```bash
+   ./start.sh --lan
+   ```
+2. > [!WARNING]
+   > **LAN mode has NO AUTHENTICATION.** Anyone on your local network can access the dashboard, download videos, and upload clips to your channel. Use only on trusted home networks.
+
+3. *(Optional)* If you run `ufw` firewall, allow inbound traffic on port 8000:
+   ```bash
+   sudo ufw allow 8000/tcp
+   ```
+
+---
+
+## Storage & Auto-Cleanup
+
+- **Low Disk Guard:** ClipSnip verifies free disk space before starting any video download. If free space is below 5.0 GB, downloads are aborted to prevent system lockups.
+- **Auto-Cleanup:** Old source videos and rendered MP4 files of successfully uploaded clips are automatically deleted after N days (default: 7 days, configurable in Settings).
+- **Export All:** Easily download all ready clips and `metadata.csv` as a `.zip` archive from the project page.
+
+---
+
+## Running the Test Suite
+
+Run the full automated test suite (56 tests):
+```bash
+.venv/bin/pytest backend/tests
+```

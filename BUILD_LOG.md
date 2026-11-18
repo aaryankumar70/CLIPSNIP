@@ -220,3 +220,31 @@ Running clip selection on a 600-second synthetic transcript generated the follow
 - Run dev server: `cd frontend && npm run dev`
 - Run all tests: `.venv/bin/pytest backend/tests`
 
+## Step 8: Run on Laptop (Linux/Arch/Omarchy Integration)
+
+### Changes Made
+- Unified single-process architecture in `backend/app/main.py`:
+  - Serves static assets and the React SPA directly from `frontend/dist`. Deep SPA routes route to `index.html`.
+  - Implemented `/api/health` diagnostic endpoint checking `ffmpeg`, `ffprobe`, Ollama service status, model availability (`qwen2.5:3b-instruct`), and storage volume free disk space.
+  - Restricted CORS to local origins and conditional wildcard for LAN mode.
+- Storage guard and cleanup in `backend/app/workers/pipeline.py`:
+  - 5.0 GB minimum free disk space check before starting video ingestion (`IngestError` aborts gracefully).
+  - Background cleanup routine (`run_cleanup_job`) that prunes rendered MP4s of uploaded clips and obsolete source files older than `cleanup_days` (default 7 days).
+  - Added `cleanup_days` to `AppSettings` schema and Settings UI.
+- Laptop bootstrap script (`start.sh`):
+  - Checks Python 3.12 / uv, FFmpeg, ffprobe, Ollama (and attempts `systemctl --user start ollama`), yt-dlp.
+  - Bootstraps `.venv` and requirements on first run.
+  - Builds frontend automatically if `frontend/dist` is missing.
+  - Handles `--lan` and `--no-browser` flags, warns about no authentication on LAN, and opens default browser to `http://localhost:8000`.
+- Systemd user service unit:
+  - Created `clipper.service` in project root and installed to `~/.config/systemd/user/clipper.service` (`systemctl --user daemon-reload`).
+- Comprehensive end-to-end test suite in `backend/tests/test_step8_e2e.py`:
+  - Validated `/api/health`, SPA serving, 5 GB disk space guard, cleanup job, and synthetic video e2e render.
+- Completely updated `README.md` for Arch/Omarchy Linux, documentation of user service, YouTube OAuth setup, and LAN mode.
+
+### How to Try It
+- Run one-command launcher: `./start.sh`
+- Run service in background: `systemctl --user enable --now clipper.service`
+- Run end-to-end tests: `.venv/bin/pytest backend/tests/test_step8_e2e.py`
+
+

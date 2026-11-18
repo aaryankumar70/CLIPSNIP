@@ -118,6 +118,11 @@ def process_project(pid: str):
         if local_src.is_file() and local_src.parent in (s.storage / "uploads", Path("/tmp")):
             path = local_src
         else:
+            if source.startswith("http"):
+                free_gb = shutil.disk_usage(s.storage).free / (1024 ** 3)
+                if free_gb < 5.0:
+                    raise IngestError(f"Free disk space is {free_gb:.1f} GB (minimum 5.0 GB required). Download aborted.")
+
             if is_youtube_url(source):
                 src = YouTubeSource(
                     source,
@@ -327,10 +332,59 @@ def process_project(pid: str):
             pass
         gc.collect()
 
+def run_cleanup_job():
+    """Deletes old source videos and rendered files of uploaded clips after N days."""
+    try:
+        s = get_settings()
+        db_s = db.get_db_settings()
+        cleanup_days = getattr(db_s, "cleanup_days", 7)
+        if cleanup_days is None or cleanup_days <= 0:
+            return
+
+        cutoff = time.time() - (cleanup_days * 86400)
+
+        # 1. Cleanup rendered files of uploaded clips
+        uploaded_clips = db.q(
+            "SELECT id, rendered_path, thumb_path, created_at FROM clips WHERE youtube_status = 'uploaded'"
+        )
+        for c in uploaded_clips:
+            if c.get("created_at") and c["created_at"] < cutoff:
+                if c.get("rendered_path"):
+                    rp = Path(c["rendered_path"])
+                    if rp.is_file():
+                        try:
+                            rp.unlink()
+                        except Exception:
+                            pass
+
+        # 2. Cleanup old uploads/source files
+        uploads_dir = s.storage / "uploads"
+        if uploads_dir.is_dir():
+            for f in uploads_dir.iterdir():
+                if f.is_file() and f.stat().st_mtime < cutoff:
+                    active = db.q(
+                        "SELECT id FROM projects WHERE source_path LIKE ? AND status IN ('queued', 'processing')",
+                        (f"%{f.name}%",),
+                        one=True,
+                    )
+                    if not active:
+                        try:
+                            f.unlink()
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
 def _queue_worker_loop():
     """Background persistent queue processor: runs jobs sequentially."""
     global _running
+    last_cleanup = 0.0
     while _running:
+        now = time.time()
+        if now - last_cleanup > 3600:
+            last_cleanup = now
+            run_cleanup_job()
+
         job = db.q("SELECT id FROM projects WHERE status = 'queued' ORDER BY created_at ASC", one=True)
         if job:
             process_project(job["id"])

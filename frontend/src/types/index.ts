@@ -64,6 +64,7 @@ export interface AppSettings {
   default_hashtags: string[];
   footer_template: string;
   delete_source_after_render: boolean;
+  cleanup_days: number;
   lan_mode: boolean;
   ollama_model: string;
   ollama_num_ctx: number;

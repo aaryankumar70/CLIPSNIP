@@ -324,6 +324,19 @@ export default function Settings() {
               </div>
             </label>
 
+            <div>
+              <label className="block text-xs font-medium text-zinc-400 mb-1">Uploaded Clips Retention (days)</label>
+              <input
+                type="number"
+                min={0}
+                max={365}
+                className="input w-full max-w-xs"
+                value={settings.cleanup_days ?? 7}
+                onChange={e => setSettings({ ...settings, cleanup_days: parseInt(e.target.value) || 0 })}
+              />
+              <p className="mt-1 text-xs text-zinc-500">Deletes rendered files of uploaded clips after N days (0 to disable)</p>
+            </div>
+
             <div className="border-t border-line/60 pt-4">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input

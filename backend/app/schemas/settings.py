@@ -18,6 +18,7 @@ class AppSettings(BaseModel):
     default_hashtags: list[str] = Field(default_factory=lambda: ["#gaming", "#shorts"])
     footer_template: str = "Clipped from {source_title} by {channel} - {source_url}"
     delete_source_after_render: bool = False
+    cleanup_days: int = Field(default=7, ge=0, le=365)
     lan_mode: bool = False
     ollama_model: str = "qwen2.5:3b-instruct"
     ollama_num_ctx: int = 4096

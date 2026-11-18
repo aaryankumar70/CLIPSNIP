@@ -1,0 +1,14 @@
+[Unit]
+Description=ClipSnip Video Clipper Service
+After=network.target ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ryu/Projects/ClipSnip
+ExecStart=/home/ryu/Projects/ClipSnip/start.sh --no-browser
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
