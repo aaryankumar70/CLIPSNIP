@@ -31,8 +31,16 @@ def _clip(cid: str) -> dict:
 
 def _public(p: dict) -> dict:
     end = p["finished_at"] or time.time()
-    p["elapsed"] = round(end - p["started_at"], 1) if p["started_at"] else 0
-    p.pop("source_path", None); p.pop("transcript_path", None)
+    elapsed = round(end - p["started_at"], 1) if p["started_at"] else 0
+    p["elapsed"] = elapsed
+    progress = p.get("progress") or 0.0
+    if p.get("status") == "processing" and progress > 5.0 and elapsed > 0:
+        total_est = elapsed / (progress / 100.0)
+        p["eta"] = round(max(0.0, total_est - elapsed), 1)
+    else:
+        p["eta"] = None
+    p.pop("source_path", None)
+    p.pop("transcript_path", None)
     return p
 
 @router.post("/jobs", status_code=202)
@@ -40,9 +48,11 @@ async def create_job(url: str | None = Form(None), file: UploadFile | None = Fil
     s = get_settings()
     if bool(url) == bool(file):
         raise HTTPException(400, "Provide either a video URL or an uploaded file")
+
     if file:
         ext = Path(file.filename or "").suffix.lower()
-        if ext not in ALLOWED_EXT: raise HTTPException(400, f"Unsupported file type '{ext}'")
+        if ext not in ALLOWED_EXT:
+            raise HTTPException(400, f"Unsupported file type '{ext}'")
         (s.storage / "uploads").mkdir(parents=True, exist_ok=True)
         dest = s.storage / "uploads" / f"{uuid.uuid4().hex}{ext}"
         size = 0
@@ -50,14 +60,41 @@ async def create_job(url: str | None = Form(None), file: UploadFile | None = Fil
             while chunk := await file.read(1 << 20):
                 size += len(chunk)
                 if size > s.max_video_size:
-                    f.close(); dest.unlink(missing_ok=True); raise HTTPException(413, "Video exceeds the maximum allowed size")
+                    f.close()
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(413, "Video exceeds the maximum allowed size")
                 f.write(chunk)
-        pid, source, name = db.create_project(Path(file.filename).stem[:80], str(dest)), str(dest), Path(file.filename).stem[:80]
-    else:
-        if not url.startswith(("http://", "https://")): raise HTTPException(400, "Invalid URL")
-        pid, source = db.create_project(url[:80], url), url
-    pipeline.submit(pid, source)
-    return {"id": pid}
+        pid = db.create_project(Path(file.filename).stem[:80], str(dest))
+        pipeline.submit(pid, str(dest))
+        return {"id": pid, "ids": [pid], "count": 1}
+
+    # URL input: supports multiple newline-separated URLs
+    raw_lines = [line.strip() for line in (url or "").splitlines() if line.strip() and not line.strip().startswith("#")]
+    if not raw_lines:
+        raise HTTPException(400, "Invalid URL input")
+
+    created_ids = []
+    for line in raw_lines:
+        if not line.startswith(("http://", "https://")):
+            raise HTTPException(400, f"Invalid URL: {line}")
+        pid = db.create_project(line[:80], line)
+        pipeline.submit(pid, line)
+        created_ids.append(pid)
+
+    return {"id": created_ids[0], "ids": created_ids, "count": len(created_ids)}
+
+@router.post("/jobs/{pid}/retry", status_code=200)
+def retry_job(pid: str):
+    _proj(pid)
+    db.update_project(pid, status="queued", error=None, started_at=None, finished_at=None)
+    pipeline.submit(pid)
+    return {"status": "queued", "id": pid}
+
+@router.post("/jobs/{pid}/cancel", status_code=200)
+def cancel_job(pid: str):
+    _proj(pid)
+    db.update_project(pid, status="cancelled", stage="cancelled", finished_at=time.time())
+    return {"status": "cancelled", "id": pid}
 
 @router.get("/jobs")
 def list_jobs():

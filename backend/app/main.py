@@ -1,28 +1,38 @@
+from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .api.routes import router
 from .config import get_settings
 from .models import db
+from .workers import pipeline
 
-app = FastAPI(title="Clipper")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-                   allow_methods=["*"], allow_headers=["*"])
-app.include_router(router)
-
-@app.on_event("startup")
-def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     s = get_settings()
     for d in ("uploads", "audio", "transcripts", "clips", "rendered", "thumbnails"):
         (s.storage / d).mkdir(parents=True, exist_ok=True)
-    # interrupted jobs (server restarted mid-run) must not stay "processing" forever
-    db.q("UPDATE projects SET status='failed', error='Server restarted while processing; please re-run' WHERE status IN ('queued','processing')")
+    # Interrupted jobs resume from last finished stage: reset 'processing' to 'queued'
+    db.q("UPDATE projects SET status='queued' WHERE status='processing'")
+    pipeline.start_worker()
+    yield
 
-@app.on_event("startup")
-def mount_media():
-    s = get_settings()
-    app.mount("/media/rendered", StaticFiles(directory=s.storage / "rendered"), name="rendered")
-    app.mount("/media/thumbnails", StaticFiles(directory=s.storage / "thumbnails"), name="thumbs")
+app = FastAPI(title="Clipper", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(router)
+
+s = get_settings()
+(s.storage / "rendered").mkdir(parents=True, exist_ok=True)
+(s.storage / "thumbnails").mkdir(parents=True, exist_ok=True)
+app.mount("/media/rendered", StaticFiles(directory=s.storage / "rendered"), name="rendered")
+app.mount("/media/thumbnails", StaticFiles(directory=s.storage / "thumbnails"), name="thumbs")
 
 @app.get("/api/health")
-def health(): return {"ok": True}
+def health():
+    return {"ok": True}

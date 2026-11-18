@@ -138,3 +138,31 @@ Running clip selection on a 600-second synthetic transcript generated the follow
 ### How to Try It
 - Run tests: `.venv/bin/pytest -s backend/tests/test_step4_render_export.py`
 - Export project clips as zip: `curl -O http://localhost:8000/api/projects/<pid>/export`
+
+## Step 5: Persistent Queue, Resume from Caches, and Batch API
+
+### Changes Made
+- Implemented persistent SQLite worker loop in `backend/app/workers/pipeline.py`:
+  - `start_worker()`: Starts a daemon thread sequentially processing queued jobs from SQLite.
+  - Stage-by-stage caching:
+    - Ingest: reuses existing local video if already downloaded.
+    - Transcription: reuses `storage/transcripts/<id>.json` and `.sentences.json` if present.
+    - Clip analysis: reuses candidate clip records in `clips` table if already generated.
+    - Metadata: generates only missing titles/descriptions/tags.
+    - Render: checks existing rendered files and skips re-rendering clips that were already completed before restart or crash.
+    - Cleanup: optionally deletes source video if `delete_source_after_render` is enabled.
+- Upgraded `backend/app/main.py`:
+  - Converted to FastAPI async lifespan handler.
+  - On restart, resets any interrupted `processing` jobs back to `queued` so the worker picks them up and resumes where they left off.
+- Upgraded `backend/app/api/routes.py`:
+  - `POST /api/jobs`: Accepts multiple newline-separated URLs, enqueuing one job per URL.
+  - `POST /api/jobs/{pid}/retry`: Resets job status to `queued` and triggers queue worker.
+  - `POST /api/jobs/{pid}/cancel`: Cancels job immediately.
+  - `_public`: Added real-time ETA calculation based on elapsed time and stage progress.
+- Added test suite `backend/tests/test_step5_persistent_queue_resume.py`.
+
+### How to Try It
+- Run tests: `.venv/bin/pytest backend/tests/test_step5_persistent_queue_resume.py`
+- Create multi-URL job: `curl -X POST http://localhost:8000/api/jobs -d "url=https://youtube.com/watch?v=1\nhttps://youtube.com/watch?v=2"`
+- Cancel job: `curl -X POST http://localhost:8000/api/jobs/<id>/cancel`
+- Retry job: `curl -X POST http://localhost:8000/api/jobs/<id>/retry`
