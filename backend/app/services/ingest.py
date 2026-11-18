@@ -124,6 +124,8 @@ class YouTubeSource(VideoSource):
             "writeautomaticsub": True,
             "subtitlesformat": "json3",
             "subtitleslangs": [caption_lang, "en", "en-US", "en-GB"],
+            "ignoreerrors": True,
+            "js_runtimes": {"node": {}},
             "progress_hooks": [_hook],
             "quiet": True,
             "no_warnings": True,
@@ -160,17 +162,29 @@ class YouTubeSource(VideoSource):
 
         except yt_dlp.utils.DownloadError as e:
             err = str(e)
-            if "Private video" in err:
+            if "subtitles" in err.lower() or "429" in err:
+                # If YouTube rate limits subtitle download (HTTP 429), download video without subtitles;
+                # faster-whisper will automatically handle speech-to-text in Stage 2.
+                ydl_opts_no_sub = dict(ydl_opts)
+                ydl_opts_no_sub["writesubtitles"] = False
+                ydl_opts_no_sub["writeautomaticsub"] = False
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts_no_sub) as ydl_retry:
+                        ydl_retry.download([self.url])
+                except Exception as retry_err:
+                    raise IngestError(f"YouTube download failed: {retry_err}") from retry_err
+            elif "Private video" in err:
                 raise IngestError("YouTube video is private") from e
-            if "Video unavailable" in err or "removed" in err:
+            elif "Video unavailable" in err or "removed" in err:
                 raise IngestError("YouTube video has been removed or is unavailable") from e
-            if "Sign in to confirm your age" in err:
+            elif "Sign in to confirm your age" in err:
                 raise IngestError("YouTube video is age-restricted") from e
-            if "Premieres in" in err or "Live event" in err or "This live event" in err:
+            elif "Premieres in" in err or "Live event" in err or "This live event" in err:
                 raise IngestError("YouTube video is an unfinished live stream or premiere") from e
-            if "not available in your country" in err or "blocked" in err.lower():
+            elif "not available in your country" in err or "blocked" in err.lower():
                 raise IngestError("YouTube video is geo-blocked in this region") from e
-            raise IngestError(f"YouTube download failed: {err}") from e
+            else:
+                raise IngestError(f"YouTube download failed: {err}") from e
         except IngestError:
             raise
         except Exception as e:

@@ -178,5 +178,33 @@ class TestIngestAndTranscript(unittest.TestCase):
         sent_file = s.storage / "transcripts" / f"{pid}.sentences.json"
         self.assertTrue(sent_file.is_file())
 
+    def test_youtube_subtitle_429_fallback(self):
+        """When YouTube returns HTTP 429 on subtitles, fallback downloads video without subtitles."""
+        import yt_dlp
+        from yt_dlp.utils import DownloadError
+
+        src = YouTubeSource("https://www.youtube.com/watch?v=mock429", project_id="mock_429_proj")
+        temp_dir = Path(tempfile.mkdtemp())
+        target_mp4 = temp_dir / "mock_429_proj.mp4"
+
+        first_call = True
+
+        def mock_extract(self_ydl, url, download=False):
+            return {"title": "Test Title", "duration": 120, "uploader": "Channel"}
+
+        def mock_download(self_ydl, urls):
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                raise DownloadError("ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests")
+            target_mp4.write_text("dummy video")
+            return 0
+
+        with patch.object(yt_dlp.YoutubeDL, "extract_info", mock_extract), \
+             patch.object(yt_dlp.YoutubeDL, "download", mock_download):
+            res_path = src.fetch(temp_dir)
+            self.assertEqual(res_path, target_mp4)
+            self.assertTrue(res_path.is_file())
+
 if __name__ == "__main__":
     unittest.main()
