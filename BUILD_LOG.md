@@ -111,3 +111,30 @@ Running clip selection on a 600-second synthetic transcript generated the follow
 
 ### How to Try It
 - Run tests: `.venv/bin/pytest backend/tests/test_step3_selection_metadata.py`
+
+## Step 4: Video Rendering and Export Upgrades
+
+### Changes Made
+- Upgraded `backend/app/services/ffmpeg_service.py`:
+  - `blur_fit` layout: Generates a 9:16 canvas with a blurred background (downscaled to 1/4 size, boxblurred, and scaled back up) and centered crisp foreground with lanczos scaling.
+  - `center_crop` layout: Preserved as an alternative layout.
+  - Standardized resolution: 720x1280 default (configurable to 1080x1920).
+  - Software encoding: `libx264 -preset veryfast -crf 24 -pix_fmt yuv420p -movflags +faststart`.
+  - Audio normalization: `loudnorm` filter (`I=-14:TP=-1.5:LRA=11`) with AAC 160k.
+  - `trim_clip_start`: Trims leading filler words ("um", "uh", etc.) and silence up to 1.5s before the first speech segment.
+  - Full exact re-encoding (no `-c copy`).
+- Upgraded `backend/app/services/captions.py`:
+  - Positioned bottom captions ~28% up from the bottom on vertical (9:16) video to safely avoid YouTube Shorts and Reels UI overlays.
+  - Added optional 3-second hook title overlay at the top-center from the clip title.
+- Updated `render_clip` in `backend/app/workers/pipeline.py` to respect user layout, resolution, trimming, and hook titles.
+- Added `GET /api/projects/{pid}/export` in `backend/app/api/routes.py`:
+  - Packages all ready clips for a project into a `.zip` archive alongside `metadata.csv` (`filename,title,description,tags`).
+- Added tests in `backend/tests/test_step4_render_export.py`.
+
+### Render Benchmarks (Synthetic 2.0s Clip on 4-Core CPU)
+- `blur_fit` layout (720x1280, ASS captions, loudnorm, libx264): **5.34 seconds**
+- `center_crop` layout (720x1280, ASS captions, loudnorm, libx264): **4.78 seconds**
+
+### How to Try It
+- Run tests: `.venv/bin/pytest -s backend/tests/test_step4_render_export.py`
+- Export project clips as zip: `curl -O http://localhost:8000/api/projects/<pid>/export`

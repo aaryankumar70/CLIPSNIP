@@ -19,16 +19,55 @@ def _stage(pid, name, pct): db.update_project(pid, status="processing", stage=na
 
 def render_clip(clip: dict, proj: dict, words: list[dict]) -> tuple[Path, Path]:
     s = get_settings()
-    src = Path(proj["source_path"]); info = ff.probe(src)
-    out = s.storage / "rendered" / f"{clip['id']}.mp4"; thumb = s.storage / "thumbnails" / f"{clip['id']}.jpg"
+    src = Path(proj["source_path"])
+    info = ff.probe(src)
+    db_s = db.get_db_settings()
+
+    res = getattr(db_s, "output_resolution", "720x1280") or "720x1280"
+    layout = getattr(db_s, "layout", "blur_fit") or "blur_fit"
+    tw, th = ff.get_dimensions(clip["aspect"], resolution=res)
+
+    out = s.storage / "rendered" / f"{clip['id']}.mp4"
+    thumb = s.storage / "thumbnails" / f"{clip['id']}.jpg"
+
+    # Trim leading silence / filler words (max 1.5s)
+    effective_start = ff.trim_clip_start(clip["start"], clip["end"], words)
+
     ass = None
-    if clip["caption_style"] != "off":
-        tw, th = ff.FORMATS[clip["aspect"]]
+    if clip.get("caption_style") != "off":
         ass = s.storage / "rendered" / f"{clip['id']}.ass"
-        ass.write_text(build_ass(words, clip["start"], clip["end"], tw, th, CaptionConfig(style=clip["caption_style"])), encoding="utf-8")
-    ff.cut_clip(src, out, clip["start"], clip["end"], info, clip["aspect"], ass)
-    if ass: ass.unlink(missing_ok=True)
-    ff.thumbnail(out, thumb, min(1.0, (clip["end"] - clip["start"]) / 2))
+        ass.write_text(
+            build_ass(
+                words=words,
+                clip_start=effective_start,
+                clip_end=clip["end"],
+                width=tw,
+                height=th,
+                cfg=CaptionConfig(
+                    style=clip.get("caption_style", "highlight"),
+                    hook_title=clip.get("title"),
+                ),
+            ),
+            encoding="utf-8",
+        )
+
+    try:
+        ff.cut_clip(
+            src=src,
+            out=out,
+            start=effective_start,
+            end=clip["end"],
+            info=info,
+            aspect=clip.get("aspect", "9:16"),
+            layout=layout,
+            resolution=res,
+            ass=ass,
+        )
+    finally:
+        if ass:
+            ass.unlink(missing_ok=True)
+
+    ff.thumbnail(out, thumb, min(1.0, (clip["end"] - effective_start) / 2))
     return out, thumb
 
 def run_job(pid: str, source: str):

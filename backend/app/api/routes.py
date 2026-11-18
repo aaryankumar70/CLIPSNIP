@@ -1,4 +1,4 @@
-import json, shutil, time, uuid
+import csv, io, json, shutil, time, uuid, zipfile
 from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -114,6 +114,35 @@ def download(cid: str):
         raise HTTPException(409, "Clip is not rendered yet")
     safe = "".join(ch for ch in c["title"] if ch.isalnum() or ch in " -_")[:60].strip() or "clip"
     return FileResponse(c["rendered_path"], media_type="video/mp4", filename=f"{safe}.mp4")
+
+@router.get("/projects/{pid}/export")
+def export_project_clips(pid: str):
+    p = _proj(pid)
+    clips = db.q("SELECT * FROM clips WHERE project_id=? AND render_status='ready'", (pid,))
+    if not clips:
+        raise HTTPException(404, "No rendered clips available to export")
+
+    s = get_settings()
+    (s.storage / "uploads").mkdir(parents=True, exist_ok=True)
+    zip_path = s.storage / "uploads" / f"{pid}_export.zip"
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        csv_buffer = io.StringIO()
+        csv_writer = csv.writer(csv_buffer)
+        csv_writer.writerow(["filename", "title", "description", "tags"])
+
+        for c in clips:
+            rendered_path = Path(c.get("rendered_path") or (s.storage / "rendered" / f"{c['id']}.mp4"))
+            if rendered_path.is_file():
+                safe_title = "".join(ch for ch in c["title"] if ch.isalnum() or ch in " -_")[:50].strip() or "clip"
+                arcname = f"{safe_title}_{c['id']}.mp4"
+                zf.write(rendered_path, arcname=arcname)
+                csv_writer.writerow([arcname, c.get("title", ""), c.get("description", ""), c.get("tags", "")])
+
+        zf.writestr("metadata.csv", csv_buffer.getvalue())
+
+    safe_proj = "".join(ch for ch in p["name"] if ch.isalnum() or ch in " -_")[:40].strip() or "project"
+    return FileResponse(zip_path, media_type="application/zip", filename=f"{safe_proj}_clips.zip")
 
 @router.delete("/projects/{pid}", status_code=204)
 def delete_project(pid: str):
