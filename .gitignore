@@ -1,8 +1,39 @@
-.env
-storage/*/*
-!storage/*/.gitkeep
-__pycache__/
-node_modules/
-*.db
+# Virtual environments
 .venv/
-backend/storage/*/*
+venv/
+ENV/
+
+# Node dependencies & builds
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Databases & local storage
+*.db
+*.db-journal
+storage/*
+!storage/.gitkeep
+!storage/*/.gitkeep
+
+# Secrets and environment configs
+.env
+.env.*
+!.env.example
+client_secret.json
+token.json
+storage/client_secret.json
+storage/token.json
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
