@@ -1,4 +1,4 @@
-import type { Job, Clip, Segment, AppSettings, YouTubeStatus } from "../types";
+import type { Job, Clip, Segment, AppSettings, YouTubeStatus, HealthStatus } from "../types";
 
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) {
@@ -34,6 +34,9 @@ export const api = {
     }).then(j<Clip>),
   render: (id: string) => fetch(`/api/clips/${id}/render`, { method: "POST" }).then(j<unknown>),
   remove: (id: string) => fetch(`/api/projects/${id}`, { method: "DELETE" }).then(j<void>),
+
+  // Health
+  health: () => fetch("/api/health").then(j<HealthStatus>),
 
   // Settings
   getSettings: () => fetch("/api/settings").then(j<AppSettings>),

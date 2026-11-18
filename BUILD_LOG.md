@@ -192,3 +192,31 @@ Running clip selection on a 600-second synthetic transcript generated the follow
 - Run tests: `.venv/bin/pytest backend/tests/test_step6_youtube_upload.py`
 - Check YouTube status: `curl http://localhost:8000/api/youtube/status`
 - Enqueue spread upload: `curl -X POST http://localhost:8000/api/projects/<pid>/upload-all -H "Content-Type: application/json" -d '{"spread_minutes":60}'`
+
+## Step 7: Frontend Polish (React + TypeScript + Tailwind)
+
+### Changes Made
+- Added `ToastProvider` and `useToast` in `frontend/src/context/ToastContext.tsx`:
+  - Rich notifications (success, error, info) with dismiss timers and icons.
+- Built `Settings.tsx` (`#/settings`) bound to `/api/settings`:
+  - Grouped sections: Clips (min/max duration, count), Download (quality), Metadata (tags, footer template), Upload (privacy, spread delay), Storage (delete source after render), LAN mode, and AI models (Ollama model, Whisper model).
+- Upgraded `Home.tsx` (`#/`):
+  - Multi-URL batch input textarea (one per line) with single-click batch start.
+  - Live polling (3s) queue and history table with status badges, stage descriptions, progress bars, real-time ETA, and actions (Open, Retry, Cancel, Delete).
+- Upgraded `Editor.tsx`:
+  - Drawer with video preview, start/end trimming synchronized with transcript, title/description/tags editing, layout/caption/aspect dropdowns, re-render trigger, and MP4 download link.
+- Upgraded `Project.tsx` (`#/project/:id`):
+  - Clip grid showing thumbnails, scores, duration, and render status badges.
+  - Batch actions: Select All, Delete Selected, Download Selected, and Export All (.zip).
+  - YouTube upload status bar with Connect/Reconnect OAuth flow and spread upload modal.
+  - Interactive clickable transcript viewer with click-to-seek.
+- Upgraded `App.tsx`:
+  - Responsive dark theme layout with top navigation bar and health check status polling.
+  - Warnings banner for system health issues.
+- Verified build: `npm run build` cleanly compiled to `frontend/dist/`.
+
+### How to Try It
+- Run frontend build: `cd frontend && npm run build`
+- Run dev server: `cd frontend && npm run dev`
+- Run all tests: `.venv/bin/pytest backend/tests`
+

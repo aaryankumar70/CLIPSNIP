@@ -33,6 +33,7 @@ export interface Clip {
   youtube_url: string | null;
   youtube_error: string | null;
   publish_at: string | null;
+  rendered_path?: string | null;
 }
 
 export interface Segment {
@@ -67,6 +68,17 @@ export interface AppSettings {
   ollama_model: string;
   ollama_num_ctx: number;
   whisper_model: string;
+}
+
+export interface HealthStatus {
+  ok: boolean;
+  ffmpeg?: boolean;
+  ffprobe?: boolean;
+  ollama?: boolean;
+  ollama_model?: boolean;
+  model_name?: string;
+  disk_free_gb?: number;
+  warnings?: string[];
 }
 
 export const fmt = (t: number) => {
