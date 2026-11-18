@@ -6,8 +6,8 @@ from ..models import db
 from ..providers.ai import get_provider, detect_clips, AIError
 from ..services import ffmpeg_service as ff
 from ..services.captions import CaptionConfig, build_ass
-from ..services.ingest import IngestError, LocalFileSource, DirectUrlSource
-from ..services.transcribe import transcribe, TranscriptionError
+from ..services.ingest import IngestError, LocalFileSource, DirectUrlSource, YouTubeSource, is_youtube_url
+from ..services.transcript import get_transcript, TranscriptionError
 
 pool = ThreadPoolExecutor(max_workers=1)  # one heavy job at a time (CPU/GPU bound)
 STAGES = [("ingesting", 5), ("audio", 15), ("transcribing", 45), ("analyzing", 60), ("clips", 85), ("done", 100)]
@@ -35,17 +35,22 @@ def run_job(pid: str, source: str):
     s = get_settings(); db.update_project(pid, started_at=time.time())
     try:
         _stage(pid, "ingesting", 5)
-        src = DirectUrlSource(source) if source.startswith("http") else LocalFileSource(Path(source))
+        if is_youtube_url(source):
+            src = YouTubeSource(source, project_id=pid, progress_hook=lambda pct, msg: db.update_project(pid, progress=5 + int(pct * 0.1), stage=f"ingesting: {msg}"))
+        elif source.startswith("http"):
+            src = DirectUrlSource(source)
+        else:
+            src = LocalFileSource(Path(source))
+
         path = Path(source) if not source.startswith("http") and Path(source).parent == s.storage / "uploads" else src.fetch(s.storage / "uploads")
         info = ff.probe(path)
         db.update_project(pid, source_path=str(path), duration=info.duration, width=info.width, height=info.height)
-        if not info.has_audio: raise ff.FFmpegError("Video has no audio track to transcribe")
-        _stage(pid, "audio", 15)
-        wav = ff.extract_audio(path, s.storage / "audio" / f"{pid}.wav")
-        _stage(pid, "transcribing", 30)
-        tpath = s.storage / "transcripts" / f"{pid}.json"
-        data = transcribe(wav, tpath); db.update_project(pid, transcript_path=str(tpath))
-        wav.unlink(missing_ok=True)
+        if not info.has_audio:
+            raise ff.FFmpegError("Video has no audio track to transcribe")
+
+        _stage(pid, "transcribing", 25)
+        proj = db.q("SELECT * FROM projects WHERE id=?", (pid,), one=True)
+        data = get_transcript(proj)
         _stage(pid, "analyzing", 60)
         cands = detect_clips(get_provider(s.ai_provider), data["segments"], info.duration)
         words = [w for g in data["segments"] for w in g["words"]]

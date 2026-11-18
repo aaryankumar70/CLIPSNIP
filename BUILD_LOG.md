@@ -49,3 +49,32 @@
 ### Assumptions
 - Ollama endpoint defaults to `http://localhost:11434` with model `qwen2.5:3b-instruct`.
 - Cloud providers (OpenAI, Anthropic) remain available as optional configurations if API keys are provided.
+
+## Step 2: YouTube Links, Captions, and Transcript Processing
+
+### Changes Made
+- Added `YouTubeSource` in `backend/app/services/ingest.py` powered by `yt-dlp`:
+  - Detects YouTube URLs (standard, shortened `youtu.be`, and shorts).
+  - Enforces maximum duration check (default 3 hours) and available disk space check (> 2 GB).
+  - Fetches auto-captions and manual subtitles in `json3` format during the video download pass.
+  - Formats quality up to 720p/1080p from user settings merged into MP4 container.
+  - Automatically moves subtitles to `storage/transcripts/<id>.captions.json`.
+  - Maps common YouTube errors (private, deleted, age-restricted, live streams, geo-blocks) into clear human-readable messages.
+  - Preserves source metadata on project rows: `source_title`, `channel_name`, `channel_url`, `video_url`, `duration`, `upload_date`.
+- Created `backend/app/services/transcript.py`:
+  - `parse_json3_captions`: Parses YouTube `json3` subtitles, performs rolling-caption deduplication, estimates missing word offsets, and structures word-level timestamps.
+  - `transcribe_with_whisper`: Faster-whisper fallback with int8 quantization on CPU (`base.en` or `base`), freeing memory immediately after transcription.
+  - `build_sentences`: Splits transcript into numbered sentences on punctuation or pauses > 0.7s, merging fragments with fewer than 3 words.
+  - Transcripts with under 50 words per 5 minutes are rejected.
+  - Saves both `storage/transcripts/<id>.json` and `storage/transcripts/<id>.sentences.json`.
+- Integrated `YouTubeSource` and `get_transcript` into `backend/app/workers/pipeline.py`.
+- Added test suite `backend/tests/test_step2_ingest_transcript.py`.
+
+### How to Try It
+- Run tests: `.venv/bin/pytest backend/tests/test_step2_ingest_transcript.py`
+- Ingest a YouTube URL via API: `curl -X POST http://localhost:8000/api/jobs -F "url=https://www.youtube.com/watch?v=..."`
+
+### Assumptions
+- Deno is used automatically by yt-dlp when installed for JavaScript extraction.
+- Auto-captions in json3 format are preferred for speed and CPU resource conservation over full Whisper inference.
+- `TEST_VIDEO_URL` in `CLIPPER_BUILD_PLAN.md` was not set, so tests ran against synthetic/mocked data.
