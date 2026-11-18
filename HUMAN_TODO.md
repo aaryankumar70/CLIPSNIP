@@ -2,14 +2,9 @@
 
 List of actions required from the human user. Ordered by importance, with exact copy-paste commands.
 
-- [ ] **1. Install system packages & start Ollama** (requires `sudo`):
-  ```bash
-  sudo pacman -S --needed ollama && sudo systemctl enable --now ollama
-  ```
-  *After starting Ollama, pull the default local language model:*
-  ```bash
-  ollama pull qwen2.5:3b-instruct
-  ```
+- [x] **1. Install system packages & start Ollama**:
+  - Ollama installed to `~/.local/bin/ollama` and running via `systemctl --user enable --now ollama.service`.
+  - Model `qwen2.5:3b-instruct` pulled and ready.
 
 - [ ] **2. Google Cloud Setup for YouTube Uploads** (requires browser login):
   1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project.
@@ -30,16 +25,9 @@ List of actions required from the human user. Ordered by importance, with exact 
   - A browser window will open for OAuth authorization. Log into your YouTube channel and click "Allow".
   - *(Note: In Google Cloud Testing mode, refresh tokens expire every 7 days. Click "Reconnect YouTube" when prompted).*
 
-- [ ] **4. Enable Systemd User Service (Auto-Start at Boot)**:
-  Run without sudo to keep ClipSnip running as a background service:
-  ```bash
-  systemctl --user enable --now clipper.service
-  ```
-  Check status and logs anytime:
-  ```bash
-  systemctl --user status clipper.service
-  journalctl --user -u clipper.service -f
-  ```
+- [x] **4. Enable Systemd User Service (Auto-Start at Boot)**:
+  - Enabled and active: `systemctl --user enable --now clipper.service`.
+  - Service automatically starts `start.sh --no-browser` and depends on `ollama.service`.
 
 - [ ] **5. Keep Laptop Awake During Long Jobs**:
   Configure systemd logind to ignore laptop lid close while on AC power:
@@ -54,12 +42,12 @@ List of actions required from the human user. Ordered by importance, with exact 
   sudo ufw allow 8000/tcp
   ```
 
-- [ ] **7. Maintain yt-dlp Updates**:
-  YouTube frequently updates player mechanics. Run this update command regularly:
-  ```bash
-  cd /home/ryu/Projects/ClipSnip
-  .venv/bin/uv pip install -U yt-dlp
-  ```
+- [x] **7. Maintain yt-dlp Updates**:
+  - Up-to-date in `.venv`. To update again in the future:
+    ```bash
+    cd /home/ryu/Projects/ClipSnip
+    uv pip install -U yt-dlp --python .venv
+    ```
 
 - [ ] **8. Creator Permission & Attribution**:
   - Only clip content from creators who explicitly permit shorts/clipping.
