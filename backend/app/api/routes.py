@@ -10,6 +10,15 @@ from ..workers import pipeline
 
 router = APIRouter(prefix="/api")
 
+@router.get("/settings")
+def get_settings_endpoint():
+    return db.get_db_settings().model_dump()
+
+@router.put("/settings")
+def update_settings_endpoint(body: dict):
+    return db.save_db_settings(body).model_dump()
+
+
 def _proj(pid: str) -> dict:
     p = db.q("SELECT * FROM projects WHERE id=?", (pid,), one=True)
     if not p: raise HTTPException(404, "Project not found")

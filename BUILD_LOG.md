@@ -29,3 +29,23 @@
 - Configured `.gitignore` to prevent tracking of secrets, storage, builds, and virtual environments.
 - Recorded missing system tools (`ollama`, `deno`) into `HUMAN_TODO.md`.
 - Completed `npm install` for frontend.
+
+## Step 1: Settings and Local AI
+
+### Changes Made
+- Centralized configuration constants in `backend/app/config.py`: `MIN_CLIP_S=60`, `MAX_CLIP_S=120`, `IDEAL_CLIP_MIN_S=75`, `IDEAL_CLIP_MAX_S=100`, clip count calculation `clamp(floor(video_minutes / 2.5), 3, 15)`, `WINDOW_S=300`, `WINDOW_OVERLAP_S=30`, `MAX_WINDOWS=12`, `WHISPER_MODEL=base.en`, `OLLAMA_MODEL=qwen2.5:3b-instruct`, `OLLAMA_NUM_CTX=4096`.
+- Added Pydantic schema in `backend/app/schemas/settings.py` for user settings (layout, clip lengths, max clips, resolution, caption style, default tags, upload privacy, etc.) ignoring unknown keys.
+- Added persistent `settings` key/value table in SQLite (`backend/app/models/db.py`) and implemented `GET /api/settings` and `PUT /api/settings` routes.
+- Added `OllamaProvider` to `backend/app/providers/ai.py` with temperature 0.2, configurable `num_ctx`, structured output support, `keep_alive="10m"` during jobs and `unload()` (`keep_alive=0`). Made `ollama` default provider and removed API key requirements from the default path.
+- Added friendly error messages if Ollama is not running (`sudo systemctl enable --now ollama`) or if model is missing (`ollama pull <model>`).
+- Resolved the overlap filtering bug in candidate parsing: candidates are sorted by score descending before greedy non-overlapping selection.
+- Added tests in `backend/tests/test_settings_ollama.py`.
+
+### How to Try It
+- Run tests: `.venv/bin/pytest backend/tests/test_settings_ollama.py`
+- Query settings: `curl http://localhost:8000/api/settings`
+- Update settings: `curl -X PUT http://localhost:8000/api/settings -H "Content-Type: application/json" -d '{"layout":"blur_fit","max_clips":10}'`
+
+### Assumptions
+- Ollama endpoint defaults to `http://localhost:11434` with model `qwen2.5:3b-instruct`.
+- Cloud providers (OpenAI, Anthropic) remain available as optional configurations if API keys are provided.

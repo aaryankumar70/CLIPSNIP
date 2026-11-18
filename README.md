@@ -5,12 +5,12 @@ self-contained moments, cuts them with FFmpeg, burns in word-synced captions, an
 
 ## Features
 - Real job pipeline with live progress: ingest → audio → transcription → AI analysis → clips → captions → render
+- Local-first & zero-cost AI: Ollama (`qwen2.5:3b-instruct`) and faster-whisper (`base.en`), designed for local Linux laptops with no paid APIs
 - Word-level captions in 5 styles (classic, bold, highlight, creator, minimal) or off, rendered as ASS via FFmpeg
-- Formats: 9:16, 1:1, 16:9. **Reframing is a center crop only; subject tracking is not implemented.**
-- AI Clip Score (0–100) = the model's estimate of content quality, **not** a virality prediction
-- Clip editor (start/end/title/caption style/aspect), transcript viewer with click-to-seek, delete project (removes all files)
-- LLM output is validated with Pydantic (ranges, score, length 15–90s, no overlaps) and retried on failure
-- Provider-agnostic AI layer (OpenAI, Anthropic). Everything is stored locally.
+- Formats: 9:16 vertical clips with `blur_fit` (blurred background) or `center_crop`
+- Dynamic settings management via `/api/settings` and persistent SQLite configuration
+- Automatic clip detection, sentence-boundary snapping, audio energy scoring, and metadata generation
+- YouTube Shorts direct upload and spread-publishing via YouTube Data API v3
 
 ## Architecture
 `frontend/` React+Vite+TS+Tailwind · `backend/app/` FastAPI (`api/` routes, `services/` ffmpeg/captions/ingest/transcribe,
