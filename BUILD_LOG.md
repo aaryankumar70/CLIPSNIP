@@ -257,17 +257,38 @@ Running clip selection on a 600-second synthetic transcript generated the follow
 - All 10 steps (Step 0 through Step 9) fully executed without skipping or violating constraints (zero paid APIs, 8 GB RAM memory budget with sequential processing, Linux pathlib, no sudo).
 
 ### Final Test Summary
-- **Total Tests:** 56 passed, 0 failed.
+- **Total Tests:** 58 passed, 0 failed.
   - `test_ai_db.py`: 5 passed
   - `test_api.py`: 4 passed
   - `test_media.py`: 8 passed
   - `test_settings_ollama.py`: 7 passed
-  - `test_step2_ingest_transcript.py`: 6 passed
-  - `test_step3_selection_metadata.py`: 6 passed
+  - `test_step2_ingest_transcript.py`: 7 passed
+  - `test_step3_selection_metadata.py`: 7 passed
   - `test_step4_render_export.py`: 5 passed
   - `test_step5_persistent_queue_resume.py`: 4 passed
   - `test_step6_youtube_upload.py`: 6 passed
   - `test_step8_e2e.py`: 5 passed
+
+## Live Real-World Video Test & Critical Bug Fixes
+
+### 1. YouTube Subtitles 429 Fallback & curl-cffi Integration
+- **Issue:** YouTube returns HTTP 429 (Too Many Requests) on auto-generated timedtext subtitle downloads when requested from datacenter/desktop IPs without authentication.
+- **Fix:** Configured `yt-dlp` with `ignoreerrors=True` and installed `curl-cffi` for browser TLS fingerprinting. Added an automatic fallback in `YouTubeSource`: if YouTube throttles subtitles, ingest seamlessly recovers by downloading the video stream without subtitles, letting offline `faster-whisper` transcribe the speech locally.
+- **PyAV Version Fix:** Pinned `av>=11,<14` (installed `13.1.0`) to avoid PyAV 14+ removal of `metadata_errors` in `faster-whisper`.
+
+### 2. YouTube OAuth Studio UI Integration
+- Added dedicated YouTube Studio authorization cards to the Dashboard (`Home.tsx`), Settings (`Settings.tsx`), and Sidebar (`App.tsx`).
+- Created non-blocking background OAuth listener in `youtube.py` (`start_oauth_flow()`), allowing users to click "Authorize YouTube Channel", complete consent in browser, and auto-poll until authorized.
+
+### 3. Clip Candidate Expansion for Small Local LLMs
+- **Issue:** Small local LLMs (`qwen2.5:3b-instruct`) naturally extract short dialogue punchlines (4–15s). The candidate parser strictly filtered candidates by `MIN_CLIP_S <= duration <= MAX_CLIP_S` (60–120s), silently dropping valid moments.
+- **Fix:** Updated `parse_window_candidates` in `backend/app/providers/ai.py` to automatically expand candidate sentence boundaries forward along consecutive sentences until reaching target vertical clip duration (60–120s), and trim if exceeding `max_len`. Added heuristic fallback generator to ensure no video ends with 0 clips.
+
+### 4. Live Video Verification
+- **Video:** `https://www.youtube.com/watch?v=4ckBlJM3O54` (*BREAKING Ankles With The Boys In Dead By Daylight*, 22.6 minutes, 1360s).
+- **Result:** Successfully completed all stages end-to-end (ingest -> faster-whisper transcription -> windowed Ollama analysis -> metadata generation -> FFmpeg 9:16 rendering).
+- **Outputs:** Generated 9 vertical 9:16 clips (62–99s each) with blurred background framing, audio normalization (`loudnorm`), word-highlight captions, custom YouTube titles, 3-line descriptions, tags, and attribution footers.
+
 
 
 
