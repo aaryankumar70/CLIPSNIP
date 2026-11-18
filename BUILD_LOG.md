@@ -166,3 +166,29 @@ Running clip selection on a 600-second synthetic transcript generated the follow
 - Create multi-URL job: `curl -X POST http://localhost:8000/api/jobs -d "url=https://youtube.com/watch?v=1\nhttps://youtube.com/watch?v=2"`
 - Cancel job: `curl -X POST http://localhost:8000/api/jobs/<id>/cancel`
 - Retry job: `curl -X POST http://localhost:8000/api/jobs/<id>/retry`
+
+## Step 6: YouTube Upload Integration and Spread Publishing
+
+### Changes Made
+- Created `backend/app/services/youtube.py`:
+  - OAuth 2.0 desktop authorization flow (`storage/client_secret.json` -> `storage/token.json`).
+  - Scoped strictly to `https://www.googleapis.com/auth/youtube.upload`.
+  - Token refresh handling with detection of `invalid_grant` / 7-day test token expiration.
+  - Resumable chunked upload via `google-api-python-client` with category 20 (Gaming), selfDeclaredMadeForKids=false, hasPaidProductPlacement=false.
+  - Spread upload scheduling: `privacyStatus=private` + `status.publishAt` (RFC 3339) spaced $N$ minutes apart.
+  - Background queue loop in SQLite (`uploads` table) with status progression (`queued` -> `uploading` -> `uploaded` / `failed`).
+  - Quota exception handling: handles `quotaExceeded` gracefully without crashing.
+- Implemented API routes in `backend/app/api/routes.py`:
+  - `GET /api/youtube/status`
+  - `POST /api/youtube/connect`
+  - `POST /api/youtube/disconnect`
+  - `POST /api/clips/{id}/upload`
+  - `POST /api/projects/{id}/upload-all`
+  - `GET /api/uploads`
+- Documented Google Cloud setup in `README.md` and `HUMAN_TODO.md`.
+- Added test suite in `backend/tests/test_step6_youtube_upload.py` with mocked Google API client.
+
+### How to Try It
+- Run tests: `.venv/bin/pytest backend/tests/test_step6_youtube_upload.py`
+- Check YouTube status: `curl http://localhost:8000/api/youtube/status`
+- Enqueue spread upload: `curl -X POST http://localhost:8000/api/projects/<pid>/upload-all -H "Content-Type: application/json" -d '{"spread_minutes":60}'`

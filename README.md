@@ -64,6 +64,16 @@ python ..\scripts\make_sample.py        # makes storage/sample.mp4 (20s) for man
 - A sample test video has no speech, so full pipeline runs need a video with real talking.
 - Jobs interrupted by a server restart are marked failed; re-upload to retry.
 
-## Production considerations
-Single-user, no auth. Before exposing it: add authentication, restrict CORS, use a real queue (RQ/Celery) and PostgreSQL,
-put storage behind S3/R2 (the paths are centralized in `config.py`), and add rate limits and cleanup of old projects.
+## Google Cloud YouTube Setup
+To enable YouTube Shorts direct upload and spread-publishing:
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project.
+2. Under **APIs & Services**, enable the **YouTube Data API v3**.
+3. Configure the **OAuth consent screen**:
+   - User Type: **External**
+   - Publishing Status: Leave in **Testing**
+   - Test users: Add your YouTube Google account email address.
+4. Create Credentials:
+   - Click **Create Credentials** -> **OAuth client ID**.
+   - Application type: **Desktop app**.
+   - Download the client secret JSON file and save it to `storage/client_secret.json`.
+5. Connect in the Clipper dashboard: Click "Connect YouTube" and allow access in the browser. (Note: in Testing mode, refresh tokens expire every 7 days; click "Reconnect YouTube" when prompted).

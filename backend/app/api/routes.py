@@ -6,6 +6,7 @@ from ..config import get_settings
 from ..models import db
 from ..schemas.clip import ClipUpdate
 from ..services.ingest import ALLOWED_EXT
+from ..services import youtube
 from ..workers import pipeline
 
 router = APIRouter(prefix="/api")
@@ -198,3 +199,88 @@ def source_video(pid: str):
     p = _proj(pid)
     if not p["source_path"] or not Path(p["source_path"]).is_file(): raise HTTPException(404, "Source video not available")
     return FileResponse(p["source_path"])  # supports HTTP range requests, so seeking works
+
+# ----------------- YouTube Upload Endpoints -----------------
+
+@router.get("/youtube/status")
+def youtube_status():
+    return youtube.get_auth_status()
+
+@router.post("/youtube/connect")
+def youtube_connect():
+    try:
+        return youtube.start_oauth_flow()
+    except youtube.YouTubeAuthError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"YouTube authorization failed: {e}")
+
+@router.post("/youtube/disconnect")
+def youtube_disconnect():
+    return youtube.disconnect_youtube()
+
+@router.post("/clips/{cid}/upload", status_code=202)
+def upload_single_clip(cid: str, body: dict | None = None):
+    c = _clip(cid)
+    if c.get("render_status") != "ready":
+        raise HTTPException(400, "Clip is not rendered yet")
+    body = body or {}
+    privacy = body.get("privacy_status") or db.get_db_settings().upload_privacy
+    publish_at = body.get("publish_at")
+
+    uid = db.new_id()
+    db.q(
+        "INSERT INTO uploads(id, clip_id, project_id, status, scheduled_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+        (uid, cid, c["project_id"], "queued", time.time(), time.time(), time.time()),
+    )
+    db.update_clip(cid, youtube_status="queued", publish_at=publish_at, youtube_error=None)
+    youtube.trigger_upload_queue()
+    return {"status": "queued", "upload_id": uid}
+
+@router.post("/projects/{pid}/upload-all", status_code=202)
+def upload_all_project_clips(pid: str, body: dict | None = None):
+    p = _proj(pid)
+    body = body or {}
+    spread_minutes = body.get("spread_minutes")
+    if spread_minutes is None:
+        spread_minutes = db.get_db_settings().spread_minutes
+
+    privacy = body.get("privacy_status") or db.get_db_settings().upload_privacy
+    clip_ids = body.get("clip_ids")
+
+    if clip_ids:
+        placeholders = ",".join("?" for _ in clip_ids)
+        clips = db.q(f"SELECT * FROM clips WHERE project_id=? AND id IN ({placeholders}) AND render_status='ready'", (pid, *clip_ids))
+    else:
+        clips = db.q("SELECT * FROM clips WHERE project_id=? AND render_status='ready'", (pid,))
+
+    if not clips:
+        raise HTTPException(404, "No ready clips available to upload")
+
+    import datetime
+    enqueued = []
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    for idx, c in enumerate(clips):
+        publish_at_str = None
+        scheduled_epoch = time.time()
+        if spread_minutes and spread_minutes > 0:
+            delta = datetime.timedelta(minutes=(idx + 1) * spread_minutes)
+            publish_time = now + delta
+            publish_at_str = publish_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            scheduled_epoch = time.time() + (idx + 1) * spread_minutes * 60
+
+        uid = db.new_id()
+        db.q(
+            "INSERT INTO uploads(id, clip_id, project_id, status, scheduled_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+            (uid, c["id"], pid, "queued", scheduled_epoch, time.time(), time.time()),
+        )
+        db.update_clip(c["id"], youtube_status="queued", publish_at=publish_at_str, youtube_error=None)
+        enqueued.append(c["id"])
+
+    youtube.trigger_upload_queue()
+    return {"status": "queued", "count": len(enqueued), "spread_minutes": spread_minutes}
+
+@router.get("/uploads")
+def list_uploads():
+    return db.q("SELECT * FROM uploads ORDER BY created_at DESC")

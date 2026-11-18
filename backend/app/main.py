@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from .api.routes import router
 from .config import get_settings
 from .models import db
+from .services import youtube
 from .workers import pipeline
 
 @asynccontextmanager
@@ -16,6 +17,7 @@ async def lifespan(app: FastAPI):
     # Interrupted jobs resume from last finished stage: reset 'processing' to 'queued'
     db.q("UPDATE projects SET status='queued' WHERE status='processing'")
     pipeline.start_worker()
+    youtube.start_upload_worker()
     yield
 
 app = FastAPI(title="Clipper", lifespan=lifespan)
