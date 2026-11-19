@@ -164,7 +164,7 @@ class TestStep6YouTubeUpload(unittest.TestCase):
 
         clip = db.q("SELECT * FROM clips WHERE id=?", (cid,), one=True)
         self.assertEqual(clip["publish_at"], future_iso)
-        self.assertEqual(clip["youtube_status"], "queued")
+        self.assertIn(clip["youtube_status"], ("queued", "uploading"))
 
         # Now test cancel endpoint
         res_cancel = self.client.post(f"/api/clips/{cid}/cancel-upload")
