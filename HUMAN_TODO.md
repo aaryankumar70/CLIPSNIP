@@ -43,3 +43,17 @@ List of actions required from the human user. Ordered by importance, with exact 
   - Only clip content from creators who explicitly permit shorts/clipping.
   - Ask creators to whitelist your YouTube channel handle to avoid automated Content ID claims.
   - ClipSnip automatically appends source attribution to all clip descriptions (`Clipped from {source_title} by {channel} - {source_url}`).
+
+- [ ] **9. Push Commits to GitHub**:
+  - 17 verified commits are ready on branch `main` ahead of `origin/main`.
+  - Pushing to `https://github.com/aaryankumar70/CLIPSNIP.git` requires your GitHub credentials or PAT (Personal Access Token).
+  - Run the following in your terminal:
+    ```bash
+    cd /home/ryu/Projects/ClipSnip
+    git push origin main
+    ```
+  - Alternatively, if using the GitHub CLI:
+    ```bash
+    gh auth login
+    git push origin main
+    ```
