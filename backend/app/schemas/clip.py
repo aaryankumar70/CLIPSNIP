@@ -25,5 +25,5 @@ class ClipUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     tags: str | None = None
-    caption_style: Literal["classic", "bold", "highlight", "creator", "minimal", "off"] | None = None
+    caption_style: Literal["classic", "bold", "highlight", "creator", "viral", "minimal", "off"] | None = None
     aspect: Literal["9:16", "1:1", "16:9"] | None = None

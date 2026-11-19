@@ -226,16 +226,39 @@ def upload_single_clip(cid: str, body: dict | None = None):
         raise HTTPException(400, "Clip is not rendered yet")
     body = body or {}
     privacy = body.get("privacy_status") or db.get_db_settings().upload_privacy
-    publish_at = body.get("publish_at")
+    raw_publish = body.get("publish_at")
+    publish_at = None
+    scheduled_epoch = time.time()
+
+    if raw_publish:
+        import datetime
+        try:
+            clean_s = str(raw_publish).replace("Z", "+00:00")
+            dt = datetime.datetime.fromisoformat(clean_s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            else:
+                dt = dt.astimezone(datetime.timezone.utc)
+            publish_at = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            scheduled_epoch = dt.timestamp()
+        except Exception:
+            publish_at = str(raw_publish)
 
     uid = db.new_id()
     db.q(
         "INSERT INTO uploads(id, clip_id, project_id, status, scheduled_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
-        (uid, cid, c["project_id"], "queued", time.time(), time.time(), time.time()),
+        (uid, cid, c["project_id"], "queued", scheduled_epoch, time.time(), time.time()),
     )
     db.update_clip(cid, youtube_status="queued", publish_at=publish_at, youtube_error=None)
     youtube.trigger_upload_queue()
-    return {"status": "queued", "upload_id": uid}
+    return {"status": "queued", "upload_id": uid, "publish_at": publish_at}
+
+@router.post("/clips/{cid}/cancel-upload")
+def cancel_clip_upload(cid: str):
+    c = _clip(cid)
+    db.q("UPDATE uploads SET status='cancelled', updated_at=? WHERE clip_id=? AND status IN ('queued', 'uploading')", (time.time(), cid))
+    db.update_clip(cid, youtube_status="ready", publish_at=None, youtube_error=None)
+    return {"status": "cancelled", "clip_id": cid}
 
 @router.post("/projects/{pid}/upload-all", status_code=202)
 def upload_all_project_clips(pid: str, body: dict | None = None):
@@ -260,15 +283,29 @@ def upload_all_project_clips(pid: str, body: dict | None = None):
     import datetime
     enqueued = []
     now = datetime.datetime.now(datetime.timezone.utc)
+    start_dt = now
+    raw_start = body.get("start_at")
+    if raw_start:
+        try:
+            clean_s = str(raw_start).replace("Z", "+00:00")
+            parsed_dt = datetime.datetime.fromisoformat(clean_s)
+            if parsed_dt.tzinfo is None:
+                parsed_dt = parsed_dt.replace(tzinfo=datetime.timezone.utc)
+            else:
+                parsed_dt = parsed_dt.astimezone(datetime.timezone.utc)
+            if parsed_dt > now:
+                start_dt = parsed_dt
+        except Exception:
+            start_dt = now
 
     for idx, c in enumerate(clips):
         publish_at_str = None
         scheduled_epoch = time.time()
         if spread_minutes and spread_minutes > 0:
-            delta = datetime.timedelta(minutes=(idx + 1) * spread_minutes)
-            publish_time = now + delta
+            delta = datetime.timedelta(minutes=idx * spread_minutes if raw_start else (idx + 1) * spread_minutes)
+            publish_time = start_dt + delta
             publish_at_str = publish_time.strftime("%Y-%m-%dT%H:%M:%SZ")
-            scheduled_epoch = time.time() + (idx + 1) * spread_minutes * 60
+            scheduled_epoch = publish_time.timestamp()
 
         uid = db.new_id()
         db.q(

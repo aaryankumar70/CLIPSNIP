@@ -56,8 +56,12 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
-    }).then(j<{ status: string; upload_id: string }>),
-  uploadAll: (pid: string, body?: { spread_minutes?: number; privacy_status?: string; clip_ids?: string[] }) =>
+    }).then(j<{ status: string; upload_id: string; publish_at?: string }>),
+  cancelClipUpload: (cid: string) =>
+    fetch(`/api/clips/${cid}/cancel-upload`, {
+      method: "POST",
+    }).then(j<{ status: string; clip_id: string }>),
+  uploadAll: (pid: string, body?: { spread_minutes?: number; privacy_status?: string; clip_ids?: string[]; start_at?: string }) =>
     fetch(`/api/projects/${pid}/upload-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

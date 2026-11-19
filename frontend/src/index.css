@@ -1,7 +1,45 @@
-@tailwind base; @tailwind components; @tailwind utilities;
-body { @apply bg-ink text-zinc-200 font-sans antialiased; }
-.btn { @apply inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-40; }
-.btn-primary { @apply bg-accent text-black hover:brightness-110; }
-.btn-ghost { @apply border border-line bg-white/5 hover:bg-white/10; }
-.panel { @apply rounded-xl border border-line bg-panel/80 backdrop-blur; }
-.input { @apply rounded-lg border border-line bg-black/40 px-3 py-2 text-sm outline-none focus:border-accent; }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-ink text-zinc-200 font-sans antialiased selection:bg-accent/30 selection:text-white min-h-screen;
+  background-image: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.08) 0%, transparent 45%),
+                    radial-gradient(circle at 100% 100%, rgba(168, 85, 247, 0.04) 0%, transparent 40%);
+}
+
+.btn {
+  @apply inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition duration-150 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none;
+}
+
+.btn-primary {
+  @apply bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-500/20 hover:shadow-indigo-500/35 hover:brightness-110;
+}
+
+.btn-ghost {
+  @apply border border-line bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 hover:text-white;
+}
+
+.panel {
+  @apply rounded-xl border border-line bg-panel/90 backdrop-blur-md shadow-card transition-all;
+}
+
+.input {
+  @apply rounded-lg border border-line bg-black/50 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-accent focus:ring-1 focus:ring-accent/40 transition;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e2230;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2f364a;
+}

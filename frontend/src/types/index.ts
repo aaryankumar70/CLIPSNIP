@@ -54,7 +54,7 @@ export interface AppSettings {
   clip_max_s: number;
   max_clips: number;
   layout: "blur_fit" | "center_crop";
-  caption_style: "classic" | "bold" | "highlight" | "creator" | "minimal" | "off";
+  caption_style: "classic" | "bold" | "highlight" | "creator" | "viral" | "minimal" | "off";
   output_resolution: "720x1280" | "1080x1920";
   download_quality: "720p" | "1080p";
   caption_language: string;

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { X, Play, RefreshCw, Download, Check, AlertCircle, Loader2, Save } from "lucide-react";
+import { X, Play, RefreshCw, Download, Check, AlertCircle, Loader2, Save, Calendar, Youtube } from "lucide-react";
 import { api } from "../services/api";
 import { useToast } from "../context/ToastContext";
 import { fmt, type Clip } from "../types";
+import ScheduleModal from "./ScheduleModal";
 
 export default function Editor({
   clip,
@@ -25,6 +26,7 @@ export default function Editor({
 
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(c.render_status === "rendering");
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
 
   useEffect(() => {
     if (!rendering) return;
@@ -233,6 +235,7 @@ export default function Editor({
                   onChange={e => setCaptionStyle(e.target.value)}
                 >
                   <option value="highlight">Highlight (Default)</option>
+                  <option value="viral">Viral (Neon Pop)</option>
                   <option value="creator">Creator (Pop)</option>
                   <option value="bold">Bold</option>
                   <option value="classic">Classic</option>
@@ -277,14 +280,25 @@ export default function Editor({
                   Save Details Only
                 </button>
 
+                {c.render_status === "ready" && (
+                  <button
+                    type="button"
+                    onClick={() => setShowScheduleModal(true)}
+                    className="btn btn-ghost flex-1 justify-center text-xs text-indigo-400 hover:text-indigo-300 border-indigo-500/30 bg-indigo-500/10"
+                  >
+                    <Calendar size={14} />
+                    Schedule Video
+                  </button>
+                )}
+
                 {c.rendered_path && c.render_status === "ready" && (
                   <a
                     href={`/api/clips/${c.id}/download`}
                     download
-                    className="btn btn-ghost flex-1 justify-center text-xs text-zinc-300 hover:text-white"
+                    className="btn btn-ghost justify-center text-xs text-zinc-300 hover:text-white px-3"
+                    title="Download MP4"
                   >
                     <Download size={14} />
-                    Download MP4
                   </a>
                 )}
               </div>
@@ -292,6 +306,17 @@ export default function Editor({
           </div>
         </div>
       </div>
+
+      {showScheduleModal && (
+        <ScheduleModal
+          clip={c}
+          onClose={() => setShowScheduleModal(false)}
+          onScheduled={async () => {
+            const updated = await api.clip(c.id);
+            setC(updated);
+          }}
+        />
+      )}
     </div>
   );
 }

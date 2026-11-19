@@ -4,14 +4,14 @@ from typing import Any
 
 @dataclass
 class CaptionConfig:
-    style: str = "highlight"  # classic | bold | highlight | creator | minimal | off
+    style: str = "highlight"  # classic | bold | highlight | creator | viral | minimal | off
     font: str = "Arial"
     font_size: int = 64
     position: str = "bottom"  # bottom | center | top
     color: str = "#FFFFFF"
     highlight_color: str = "#FFFF00"
     background: bool = False
-    words_per_line: int = 4
+    words_per_line: int = 3
     hook_title: str | None = None  # Optional overlay for the first 3 seconds
 
 def _ass_color(hex_: str) -> str:
@@ -39,7 +39,7 @@ def build_ass(
 
     to safely clear TikTok, Instagram Reels, and YouTube Shorts UI overlays.
     """
-    size = {"minimal": int(cfg.font_size * 0.6), "creator": int(cfg.font_size * 1.2)}.get(cfg.style, cfg.font_size)
+    size = {"minimal": int(cfg.font_size * 0.6), "creator": int(cfg.font_size * 1.2), "viral": int(cfg.font_size * 1.25)}.get(cfg.style, cfg.font_size)
     size = int(size * width / 1080)
     size = max(24, size)
 
@@ -48,7 +48,7 @@ def build_ass(
     is_vertical = height > width
     bottom_ratio = 0.28 if is_vertical else 0.12
     margin_v = int(height * (bottom_ratio if cfg.position == "bottom" else 0.10))
-    border = 3 if cfg.style in ("bold", "creator") else 2
+    border = 4 if cfg.style in ("bold", "creator", "viral") else 2
 
     styles_block = [
         "Style: Default,%s,%d,%s,%s,&H00000000,%s,%d,0,0,0,100,100,0,0,%d,%d,1,%d,40,40,%d,1"
@@ -99,7 +99,7 @@ def build_ass(
             g0 = max(grp[0]["start"], clip_start) - clip_start
             g1 = min(grp[-1]["end"], clip_end) - clip_start
 
-            if cfg.style in ("highlight", "creator"):
+            if cfg.style in ("highlight", "creator", "viral"):
                 hl = _ass_color(cfg.highlight_color)
                 for j, w in enumerate(grp):
                     s = max(w["start"], clip_start) - clip_start
@@ -108,7 +108,7 @@ def build_ass(
                     for k, x in enumerate(grp):
                         t = _esc(x["word"])
                         if k == j:
-                            extra = "\\fscx115\\fscy115" if cfg.style == "creator" else ""
+                            extra = "\\fscx120\\fscy120" if cfg.style in ("creator", "viral") else ""
                             parts.append("{\\c%s%s}%s{\\r}" % (hl, extra, t))
                         else:
                             parts.append(t)

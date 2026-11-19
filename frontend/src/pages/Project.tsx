@@ -14,19 +14,36 @@ import {
   AlertTriangle,
   RotateCcw,
   Sparkles,
+  Calendar,
+  CalendarCheck,
+  CalendarClock,
+  Flame,
+  Zap,
 } from "lucide-react";
 import { api } from "../services/api";
 import { useToast } from "../context/ToastContext";
 import { fmt, type Clip, type Job, type Segment, type YouTubeStatus } from "../types";
 import Editor from "../components/Editor";
+import ScheduleModal from "../components/ScheduleModal";
 
 const STAGES: [string, string][] = [
   ["ingesting", "Video Download & Ingest"],
-  ["transcribing", "Speech Transcription (json3 / Whisper)"],
-  ["analyzing", "AI Clip Selection & Scoring"],
-  ["metadata", "Shorts Metadata Generation"],
-  ["clips", "Video Re-encoding & ASS Captions"],
+  ["transcribing", "Speech Transcription (Whisper)"],
+  ["analyzing", "AI Fun & Viral Moment Detection"],
+  ["metadata", "High-CTR Shorts Metadata Generation"],
+  ["clips", "Video Re-encoding & Word Captions"],
 ];
+
+const CATEGORY_ICONS: Record<string, string> = {
+  funny: "😂",
+  fail: "💀",
+  dramatic: "🎭",
+  twist: "🤯",
+  mindblown: "🧠",
+  epic: "🔥",
+  gaming: "🎮",
+  educational: "💡",
+};
 
 export default function Project({ id }: { id: string }) {
   const { toast } = useToast();
@@ -36,14 +53,22 @@ export default function Project({ id }: { id: string }) {
   const [sort, setSort] = useState("score");
   const [segs, setSegs] = useState<Segment[]>([]);
   const [editClip, setEditClip] = useState<Clip | null>(null);
+  const [schedulingClip, setSchedulingClip] = useState<Clip | null>(null);
   const vidRef = useRef<HTMLVideoElement>(null);
 
   // Multi-select & Upload state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [ytStatus, setYtStatus] = useState<YouTubeStatus | null>(null);
   const [uploadPrivacy, setUploadPrivacy] = useState<"public" | "unlisted" | "private">("public");
-  const [useSpread, setUseSpread] = useState(false);
-  const [spreadMinutes, setSpreadMinutes] = useState(60);
+  const [bulkMode, setBulkMode] = useState<"immediate" | "scheduled">("immediate");
+  const [spreadMinutes, setSpreadMinutes] = useState(120);
+  const [bulkScheduleStart, setBulkScheduleStart] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(18, 0, 0, 0);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
   const [uploadingBulk, setUploadingBulk] = useState(false);
 
   // Poll project status
@@ -170,15 +195,27 @@ export default function Project({ id }: { id: string }) {
 
     setUploadingBulk(true);
     try {
+      const isScheduled = bulkMode === "scheduled";
+      let startAtIso: string | undefined = undefined;
+
+      if (isScheduled && bulkScheduleStart) {
+        const startDt = new Date(bulkScheduleStart);
+        if (!isNaN(startDt.getTime())) {
+          startAtIso = startDt.toISOString();
+        }
+      }
+
       const res = await api.uploadAll(id, {
-        privacy_status: uploadPrivacy,
-        spread_minutes: useSpread ? spreadMinutes : 0,
+        privacy_status: isScheduled ? "private" : uploadPrivacy,
+        spread_minutes: isScheduled ? spreadMinutes : 0,
         clip_ids: targetClipIds,
+        start_at: startAtIso,
       });
+
       toast.success(
-        res.spread_minutes > 0
-          ? `Queued ${res.count} clips spaced ${res.spread_minutes}m apart`
-          : `Queued ${res.count} clips for YouTube upload`
+        isScheduled
+          ? `Scheduled ${res.count} clips starting from chosen time, spaced ${spreadMinutes}m apart`
+          : `Queued ${res.count} clips for immediate upload`
       );
       loadClips();
     } catch (e) {
@@ -200,12 +237,13 @@ export default function Project({ id }: { id: string }) {
   if (job.status !== "completed") {
     const curIdx = STAGES.findIndex(s => s[0] === job.stage);
     return (
-      <div className="panel mx-auto max-w-xl p-8 my-10 shadow-2xl">
+      <div className="panel mx-auto max-w-xl p-8 my-10 shadow-2xl border-line">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-bold tracking-tight text-white uppercase">
-            {job.status === "failed" ? "Processing Failed" : "Processing Video"}
+          <h2 className="text-lg font-bold tracking-tight text-white uppercase flex items-center gap-2">
+            <Sparkles size={18} className="text-accent" />
+            {job.status === "failed" ? "Processing Failed" : "Finding Viral Clips..."}
           </h2>
-          <span className="text-xs font-mono text-accent">
+          <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent/20 text-accent font-semibold">
             {job.status === "failed" ? "ERROR" : `${Math.round(job.progress)}%`}
           </span>
         </div>
@@ -224,7 +262,7 @@ export default function Project({ id }: { id: string }) {
         ) : (
           <div className="mb-6 h-2 overflow-hidden rounded-full bg-white/10">
             <div
-              className="h-full bg-accent transition-all duration-300"
+              className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-300 rounded-full"
               style={{ width: `${Math.max(4, job.progress)}%` }}
             />
           </div>
@@ -237,7 +275,7 @@ export default function Project({ id }: { id: string }) {
             return (
               <div key={k} className="flex items-center gap-3 text-sm">
                 {isDone ? (
-                  <Check size={16} className="text-green-400 shrink-0" />
+                  <Check size={16} className="text-emerald-400 shrink-0" />
                 ) : isCurrent ? (
                   <Loader2 size={16} className="animate-spin text-accent shrink-0" />
                 ) : (
@@ -273,34 +311,44 @@ export default function Project({ id }: { id: string }) {
   const readyClips = clips.filter(c => c.render_status === "ready");
 
   return (
-    <div className="pb-20">
+    <div className="pb-20 max-w-7xl mx-auto">
       {/* Top Header & Navigation */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-line pb-4">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-line pb-5">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-white truncate max-w-xl">{job.name}</h1>
-            <span className="px-2 py-0.5 rounded text-xs bg-green-500/10 text-green-400 border border-green-500/20 font-medium">
-              {clips.length} clips
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-extrabold text-white tracking-tight truncate max-w-xl">
+              {job.name}
+            </h1>
+            <span className="px-2.5 py-0.5 rounded-full text-xs bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-semibold flex items-center gap-1">
+              <Sparkles size={11} /> {clips.length} Clips Found
             </span>
           </div>
-          <p className="mt-1 text-xs text-zinc-400">
-            Source duration: {job.duration ? fmt(job.duration) : "N/A"} · Processed in {Math.round(job.elapsed)}s
+          <p className="mt-1 text-xs text-zinc-400 flex items-center gap-2">
+            <span>Duration: {job.duration ? fmt(job.duration) : "N/A"}</span>
+            <span>•</span>
+            <span>Processed in {Math.round(job.elapsed)}s</span>
+            <span>•</span>
+            <span className="text-emerald-400">High-retention 25–60s clips</span>
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <div className="flex rounded-lg border border-line bg-panel p-1">
             <button
-              className={`rounded px-3 py-1 text-xs font-medium transition ${
-                tab === "clips" ? "bg-accent text-black" : "text-zinc-400 hover:text-white"
+              className={`rounded-md px-3.5 py-1.5 text-xs font-semibold transition ${
+                tab === "clips"
+                  ? "bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm"
+                  : "text-zinc-400 hover:text-white"
               }`}
               onClick={() => setTab("clips")}
             >
               Clips ({clips.length})
             </button>
             <button
-              className={`rounded px-3 py-1 text-xs font-medium transition ${
-                tab === "transcript" ? "bg-accent text-black" : "text-zinc-400 hover:text-white"
+              className={`rounded-md px-3.5 py-1.5 text-xs font-semibold transition ${
+                tab === "transcript"
+                  ? "bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm"
+                  : "text-zinc-400 hover:text-white"
               }`}
               onClick={() => setTab("transcript")}
             >
@@ -311,7 +359,7 @@ export default function Project({ id }: { id: string }) {
           <a
             href={`/api/projects/${id}/export`}
             download
-            className="btn btn-ghost text-xs text-zinc-300 hover:text-white"
+            className="btn btn-ghost text-xs text-zinc-300 hover:text-white flex items-center gap-1.5 py-1.5"
             title="Download ZIP with all clips and metadata.csv"
           >
             <Archive size={14} />
@@ -322,17 +370,26 @@ export default function Project({ id }: { id: string }) {
 
       {tab === "clips" ? (
         <>
-          {/* YouTube Integration Card & Bulk Actions Bar */}
-          <div className="panel p-5 mb-8 border-line bg-panel/60">
+          {/* YouTube Upload & Scheduling Studio Banner */}
+          <div className="panel p-5 mb-8 border-line bg-gradient-to-br from-panel/90 via-surface/40 to-panel/80 shadow-lg">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-              <div className="flex items-center gap-3">
-                <Youtube className="w-6 h-6 text-red-500 shrink-0" />
+              <div className="flex items-center gap-3.5">
+                <div className="p-2.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 shadow-sm">
+                  <Youtube className="w-6 h-6 shrink-0" />
+                </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-white">YouTube Upload Studio</h3>
-                  <p className="text-xs text-zinc-400">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    YouTube Shorts Studio & Scheduler
+                    {ytStatus?.authenticated && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-medium">
+                        Live Connected
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
                     {ytStatus?.authenticated ? (
-                      <span className="text-green-400 inline-flex items-center gap-1">
-                        <CheckCircle2 size={12} /> Connected (OAuth Desktop App)
+                      <span className="text-zinc-300">
+                        Upload immediately or schedule your Shorts to go public at optimal viewing hours.
                       </span>
                     ) : ytStatus?.reconnect_needed ? (
                       <span className="text-yellow-400 inline-flex items-center gap-1">
@@ -340,7 +397,7 @@ export default function Project({ id }: { id: string }) {
                       </span>
                     ) : (
                       <span className="text-zinc-400">
-                        Connect YouTube to upload Shorts directly from Clipper.
+                        Connect YouTube to upload and schedule Shorts directly from ClipSnip.
                       </span>
                     )}
                   </p>
@@ -351,14 +408,14 @@ export default function Project({ id }: { id: string }) {
                 {ytStatus?.authenticated ? (
                   <button
                     onClick={handleDisconnectYouTube}
-                    className="btn btn-ghost text-xs text-zinc-400 hover:text-red-400"
+                    className="btn btn-ghost text-xs text-zinc-400 hover:text-red-400 py-1.5"
                   >
-                    Disconnect
+                    Disconnect Channel
                   </button>
                 ) : (
                   <button
                     onClick={handleConnectYouTube}
-                    className="btn btn-primary text-xs"
+                    className="btn btn-primary text-xs py-2 px-4 shadow-sm"
                   >
                     <Youtube size={14} />
                     {ytStatus?.reconnect_needed ? "Reconnect YouTube" : "Connect YouTube"}
@@ -367,95 +424,147 @@ export default function Project({ id }: { id: string }) {
               </div>
             </div>
 
-            {/* Bulk Upload Controls */}
+            {/* Bulk Controls */}
             {ytStatus?.authenticated && (
-              <div className="pt-4 border-t border-line/60 flex flex-wrap items-center justify-between gap-4">
-                <div className="flex flex-wrap items-center gap-4 text-xs">
+              <div className="pt-4 border-t border-line/60 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  {/* Mode Selector */}
+                  <div className="flex items-center gap-2 p-1 rounded-lg bg-black/40 border border-line text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setBulkMode("immediate")}
+                      className={`px-3 py-1 rounded font-medium transition ${
+                        bulkMode === "immediate"
+                          ? "bg-white/10 text-white shadow-sm"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      🚀 Upload Now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkMode("scheduled")}
+                      className={`px-3 py-1 rounded font-medium transition flex items-center gap-1.5 ${
+                        bulkMode === "scheduled"
+                          ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shadow-sm"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      <CalendarClock size={13} />
+                      📅 Schedule Release
+                    </button>
+                  </div>
+
+                  {/* Actions */}
                   <div className="flex items-center gap-2">
-                    <span className="text-zinc-400">Privacy:</span>
+                    <button
+                      onClick={() => handleUploadBulk(true)}
+                      disabled={uploadingBulk || selectedIds.size === 0}
+                      className="btn btn-ghost text-xs py-1.5"
+                    >
+                      <Upload size={13} />
+                      {bulkMode === "scheduled" ? "Schedule Selected" : "Upload Selected"} ({selectedIds.size})
+                    </button>
+                    <button
+                      onClick={() => handleUploadBulk(false)}
+                      disabled={uploadingBulk || readyClips.length === 0}
+                      className="btn btn-primary text-xs py-1.5"
+                    >
+                      {uploadingBulk ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : bulkMode === "scheduled" ? (
+                        <CalendarClock size={13} />
+                      ) : (
+                        <Upload size={13} />
+                      )}
+                      {bulkMode === "scheduled"
+                        ? `Schedule All (${readyClips.length})`
+                        : `Upload All (${readyClips.length})`}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub-options for Scheduled vs Immediate */}
+                {bulkMode === "scheduled" ? (
+                  <div className="p-3 rounded-lg bg-indigo-950/20 border border-indigo-500/20 flex flex-wrap items-center gap-4 text-xs animate-in fade-in">
+                    <div className="flex items-center gap-2">
+                      <span className="text-zinc-300 font-medium flex items-center gap-1">
+                        <Calendar size={13} className="text-indigo-400" />
+                        First Release:
+                      </span>
+                      <input
+                        type="datetime-local"
+                        value={bulkScheduleStart}
+                        onChange={e => setBulkScheduleStart(e.target.value)}
+                        className="input py-1 px-2 text-xs font-mono"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-zinc-300 font-medium flex items-center gap-1">
+                        <Clock size={13} className="text-indigo-400" />
+                        Space Every:
+                      </span>
+                      <select
+                        className="input py-1 text-xs"
+                        value={spreadMinutes}
+                        onChange={e => setSpreadMinutes(parseInt(e.target.value))}
+                      >
+                        <option value={60}>1 hour</option>
+                        <option value={120}>2 hours (Recommended)</option>
+                        <option value={240}>4 hours</option>
+                        <option value={720}>12 hours</option>
+                        <option value={1440}>24 hours (1 clip per day)</option>
+                      </select>
+                    </div>
+
+                    <span className="text-zinc-400 text-[11px] ml-auto">
+                      Clips will be automatically released to public at spaced intervals.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-zinc-400">Visibility:</span>
                     <select
                       className="input py-1 text-xs"
                       value={uploadPrivacy}
                       onChange={e => setUploadPrivacy(e.target.value as any)}
                     >
-                      <option value="public">Public</option>
+                      <option value="public">Public (Immediate)</option>
                       <option value="unlisted">Unlisted</option>
                       <option value="private">Private</option>
                     </select>
                   </div>
-
-                  <label className="flex items-center gap-2 cursor-pointer text-zinc-300">
-                    <input
-                      type="checkbox"
-                      checked={useSpread}
-                      onChange={e => setUseSpread(e.target.checked)}
-                      className="rounded border-line bg-black/40 text-accent focus:ring-accent"
-                    />
-                    <span>Spread uploads every</span>
-                  </label>
-
-                  {useSpread && (
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        min={5}
-                        max={1440}
-                        value={spreadMinutes}
-                        onChange={e => setSpreadMinutes(parseInt(e.target.value) || 60)}
-                        className="input w-16 py-1 text-xs"
-                      />
-                      <span className="text-zinc-400">min</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleUploadBulk(true)}
-                    disabled={uploadingBulk || selectedIds.size === 0}
-                    className="btn btn-ghost text-xs"
-                  >
-                    <Upload size={14} />
-                    Upload Selected ({selectedIds.size})
-                  </button>
-                  <button
-                    onClick={() => handleUploadBulk(false)}
-                    disabled={uploadingBulk || readyClips.length === 0}
-                    className="btn btn-primary text-xs"
-                  >
-                    <Upload size={14} />
-                    Upload All ({readyClips.length})
-                  </button>
-                </div>
+                )}
               </div>
             )}
           </div>
 
           {/* Clips Toolbar: Selection & Sorting */}
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
             <div className="flex items-center gap-3 text-xs">
               <button
                 onClick={handleSelectAll}
-                className="btn btn-ghost px-2.5 py-1 text-xs text-zinc-300"
+                className="btn btn-ghost px-3 py-1.5 text-xs text-zinc-300 hover:text-white"
               >
                 {selectedIds.size === clips.length && clips.length > 0 ? "Deselect All" : "Select All"}
               </button>
-              <span className="text-zinc-500">
+              <span className="text-zinc-500 font-medium">
                 {selectedIds.size} of {clips.length} selected
               </span>
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-400">Sort by:</span>
+              <span className="text-xs text-zinc-400 font-medium">Sort by:</span>
               <select
-                className="input py-1 text-xs"
+                className="input py-1.5 text-xs font-medium"
                 value={sort}
                 onChange={e => setSort(e.target.value)}
               >
-                <option value="score">Highest AI Score</option>
-                <option value="newest">Newest</option>
-                <option value="longest">Longest</option>
-                <option value="shortest">Shortest</option>
+                <option value="score">🔥 Highest AI Viral Score</option>
+                <option value="newest">🕒 Chronological Order</option>
+                <option value="shortest">⚡ Shortest (Fast Paced)</option>
+                <option value="longest">⏳ Longest</option>
               </select>
             </div>
           </div>
@@ -465,16 +574,22 @@ export default function Project({ id }: { id: string }) {
             {clips.map(c => {
               const isSelected = selectedIds.has(c.id);
               const durationS = Math.max(0, c.end - c.start);
+              const isHighViral = c.score >= 85;
+              const isGood = c.score >= 70;
+              const catIcon = CATEGORY_ICONS[c.category?.toLowerCase() || ""] || "⚡";
+              const isScheduled = c.youtube_status === "queued" && Boolean(c.publish_at);
 
               return (
                 <div
                   key={c.id}
-                  className={`panel overflow-hidden border transition flex flex-col ${
-                    isSelected ? "border-accent ring-1 ring-accent" : "border-line"
+                  className={`panel overflow-hidden border transition-all duration-200 flex flex-col group ${
+                    isSelected
+                      ? "border-accent ring-2 ring-accent/30 shadow-glow"
+                      : "border-line hover:border-zinc-700"
                   }`}
                 >
                   {/* Thumbnail / Video Preview */}
-                  <div className="relative aspect-[9/16] bg-black max-h-[360px] overflow-hidden flex items-center justify-center">
+                  <div className="relative aspect-[9/16] bg-black max-h-[380px] overflow-hidden flex items-center justify-center">
                     {c.video_url && c.render_status === "ready" ? (
                       <video
                         src={c.video_url}
@@ -486,9 +601,9 @@ export default function Project({ id }: { id: string }) {
                     ) : (
                       <div className="text-center p-4 text-xs text-zinc-500">
                         {c.render_status === "rendering" ? (
-                          <div className="flex flex-col items-center gap-1.5 text-accent">
-                            <Loader2 className="animate-spin w-5 h-5" />
-                            <span>Rendering...</span>
+                          <div className="flex flex-col items-center gap-2 text-accent">
+                            <Loader2 className="animate-spin w-6 h-6" />
+                            <span className="font-medium">Rendering clip with captions...</span>
                           </div>
                         ) : c.render_status === "failed" ? (
                           <span className="text-red-400">{c.render_error || "Render failed"}</span>
@@ -498,42 +613,71 @@ export default function Project({ id }: { id: string }) {
                       </div>
                     )}
 
-                    {/* Card Checkbox */}
-                    <div className="absolute top-2 left-2 z-10">
+                    {/* Checkbox overlay */}
+                    <div className="absolute top-2.5 left-2.5 z-10">
                       <input
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => toggleSelect(c.id)}
-                        className="w-5 h-5 rounded border-line bg-black/60 text-accent focus:ring-accent cursor-pointer"
+                        className="w-5 h-5 rounded border-line bg-black/60 text-accent focus:ring-accent cursor-pointer transition"
                       />
                     </div>
 
+                    {/* Viral score badge */}
+                    <div className="absolute top-2.5 right-2.5 z-10">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[11px] font-bold backdrop-blur-md flex items-center gap-1 shadow-md ${
+                          isHighViral
+                            ? "bg-emerald-500/80 text-white border border-emerald-400/40"
+                            : isGood
+                            ? "bg-indigo-500/80 text-white border border-indigo-400/40"
+                            : "bg-black/75 text-zinc-300 border border-white/10"
+                        }`}
+                      >
+                        {isHighViral && <Flame size={12} className="text-yellow-300 fill-yellow-300" />}
+                        {Math.round(c.score)} Viral
+                      </span>
+                    </div>
+
                     {/* Duration badge */}
-                    <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded text-xs bg-black/80 text-white font-mono">
+                    <div className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded text-xs bg-black/85 text-white font-mono font-medium backdrop-blur-sm">
                       {durationS.toFixed(1)}s
                     </div>
                   </div>
 
                   {/* Card Content */}
-                  <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                  <div className="p-4 flex-1 flex flex-col justify-between space-y-3 bg-panel/50">
                     <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-accent/10 text-accent border border-accent/20">
-                          Score {Math.round(c.score)}
-                        </span>
-                        <span className="text-xs text-zinc-500 capitalize">{c.category || "Gaming"}</span>
+                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                        {c.category && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-white/5 text-zinc-300 border border-white/10 capitalize flex items-center gap-1">
+                            <span>{catIcon}</span>
+                            <span>{c.category}</span>
+                          </span>
+                        )}
+                        {durationS <= 45 && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/15 text-amber-300 border border-amber-500/20">
+                            Fast Paced
+                          </span>
+                        )}
                       </div>
-                      <h3 className="font-semibold text-white line-clamp-2 text-sm" title={c.title}>
+
+                      <h3
+                        className="font-bold text-white line-clamp-2 text-sm leading-snug hover:text-accent transition cursor-pointer"
+                        title={c.title}
+                        onClick={() => setEditClip(c)}
+                      >
                         {c.title}
                       </h3>
+
                       {c.hook && (
-                        <p className="mt-1 text-xs text-zinc-400 line-clamp-1 italic">
-                          Hook: {c.hook}
+                        <p className="mt-1 text-xs text-zinc-400 line-clamp-2 italic">
+                          "{c.hook}"
                         </p>
                       )}
                     </div>
 
-                    {/* YouTube Status Badge */}
+                    {/* YouTube Scheduled / Uploaded Status */}
                     {c.youtube_status && c.youtube_status !== "ready" && (
                       <div className="pt-2 border-t border-line/60">
                         {c.youtube_status === "uploaded" && c.youtube_url ? (
@@ -541,24 +685,30 @@ export default function Project({ id }: { id: string }) {
                             href={c.youtube_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 font-medium"
+                            className="inline-flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 font-semibold"
                           >
                             <Youtube size={14} />
-                            View on YouTube Shorts
+                            View Shorts on YouTube
                             <ExternalLink size={12} />
                           </a>
                         ) : c.youtube_status === "uploading" ? (
-                          <span className="text-xs text-blue-400 inline-flex items-center gap-1">
+                          <span className="text-xs text-blue-400 inline-flex items-center gap-1 font-medium">
                             <Loader2 size={12} className="animate-spin" /> Uploading to YouTube...
                           </span>
-                        ) : c.youtube_status === "queued" ? (
-                          <span className="text-xs text-yellow-400 inline-flex items-center gap-1">
-                            <Clock size={12} />
-                            {c.publish_at ? `Scheduled for ${new Date(c.publish_at).toLocaleTimeString()}` : "Queued for upload"}
-                          </span>
+                        ) : isScheduled ? (
+                          <button
+                            onClick={() => setSchedulingClip(c)}
+                            className="text-xs text-indigo-300 hover:text-indigo-200 inline-flex items-center gap-1.5 bg-indigo-500/10 px-2 py-1 rounded border border-indigo-500/30 font-medium w-full text-left"
+                            title="Click to view or edit scheduled release"
+                          >
+                            <CalendarClock size={13} className="text-indigo-400 shrink-0" />
+                            <span className="truncate">
+                              Scheduled: {new Date(c.publish_at!).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                            </span>
+                          </button>
                         ) : (
-                          <span className="text-xs text-red-400 inline-flex items-center gap-1">
-                            <AlertTriangle size={12} /> Upload error: {c.youtube_error}
+                          <span className="text-xs text-yellow-400 inline-flex items-center gap-1">
+                            <Clock size={12} /> Queued for upload
                           </span>
                         )}
                       </div>
@@ -568,17 +718,27 @@ export default function Project({ id }: { id: string }) {
                     <div className="flex items-center gap-2 pt-2 border-t border-line/60">
                       <button
                         onClick={() => setEditClip(c)}
-                        className="btn btn-ghost flex-1 justify-center text-xs py-1.5"
+                        className="btn btn-ghost flex-1 justify-center text-xs py-1.5 text-zinc-300 hover:text-white"
                       >
                         <Pencil size={13} />
                         Edit
                       </button>
 
-                      {ytStatus?.authenticated && c.render_status === "ready" && c.youtube_status !== "uploaded" && (
+                      {ytStatus?.authenticated && c.render_status === "ready" && (
+                        <button
+                          onClick={() => setSchedulingClip(c)}
+                          title="Schedule for YouTube"
+                          className="btn btn-ghost text-xs py-1.5 px-2.5 text-indigo-400 hover:text-indigo-300 border-indigo-500/30 bg-indigo-500/10"
+                        >
+                          <CalendarClock size={14} />
+                        </button>
+                      )}
+
+                      {ytStatus?.authenticated && c.render_status === "ready" && c.youtube_status !== "uploaded" && !isScheduled && (
                         <button
                           onClick={() => handleUploadSingle(c.id)}
-                          title="Upload clip to YouTube"
-                          className="btn btn-ghost text-xs py-1.5 text-red-400 hover:text-red-300"
+                          title="Upload immediately to YouTube"
+                          className="btn btn-ghost text-xs py-1.5 px-2.5 text-red-400 hover:text-red-300 border-red-500/30 bg-red-500/10"
                         >
                           <Upload size={13} />
                         </button>
@@ -587,8 +747,10 @@ export default function Project({ id }: { id: string }) {
                       <a
                         href={`/api/clips/${c.id}/download`}
                         download
-                        className={`btn btn-ghost text-xs py-1.5 px-3 ${
-                          c.render_status === "ready" ? "text-zinc-300 hover:text-white" : "pointer-events-none opacity-30"
+                        className={`btn btn-ghost text-xs py-1.5 px-2.5 ${
+                          c.render_status === "ready"
+                            ? "text-zinc-300 hover:text-white"
+                            : "pointer-events-none opacity-30"
                         }`}
                         title="Download MP4"
                       >
@@ -638,13 +800,24 @@ export default function Project({ id }: { id: string }) {
         </div>
       )}
 
-      {/* Clip Edit Drawer */}
+      {/* Clip Edit Modal */}
       {editClip && (
         <Editor
           clip={editClip}
           duration={job.duration || 600}
           onClose={() => {
             setEditClip(null);
+            loadClips();
+          }}
+        />
+      )}
+
+      {/* Schedule Modal */}
+      {schedulingClip && (
+        <ScheduleModal
+          clip={schedulingClip}
+          onClose={() => setSchedulingClip(null)}
+          onScheduled={() => {
             loadClips();
           }}
         />

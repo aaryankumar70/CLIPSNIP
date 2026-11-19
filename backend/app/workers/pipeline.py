@@ -189,14 +189,16 @@ def process_project(pid: str):
                 ff.extract_audio(path, wav_path)
 
             target_n = calculate_clip_count(info.duration, override_max=db_settings.max_clips)
+            eff_min_s = 25 if db_settings.clip_min_s == 60 else db_settings.clip_min_s
+            eff_max_s = 60 if db_settings.clip_max_s == 120 else db_settings.clip_max_s
             cands = detect_clips_windowed(
                 provider=provider,
                 sentences=sentences,
                 duration=info.duration,
                 target_count=target_n,
                 wav_path=wav_path,
-                min_clip_s=db_settings.clip_min_s,
-                max_clip_s=db_settings.clip_max_s,
+                min_clip_s=eff_min_s,
+                max_clip_s=eff_max_s,
             )
 
             # Insert candidates into DB
@@ -213,7 +215,7 @@ def process_project(pid: str):
                         c.get("hook_reason", ""),
                         c.get("hook_reason", ""),
                         c.get("final_score", 80.0),
-                        "gaming",
+                        c.get("category", "funny"),
                         db_settings.caption_style,
                         "9:16",
                         time.time(),
@@ -232,8 +234,12 @@ def process_project(pid: str):
 
         for c in existing_clips:
             if not c.get("description") or not c.get("tags"):
-                # Generate missing metadata
-                clip_text = c.get("title", "")
+                # Extract actual transcript text for this clip duration
+                clip_sentences = [
+                    s.get("text", "") for s in sentences
+                    if not (s.get("end", 0) < c["start"] or s.get("start", 0) > c["end"])
+                ]
+                clip_text = " ".join(clip_sentences).strip() or c.get("title", "")
                 meta = generate_clip_metadata(
                     provider=provider,
                     clip_text=clip_text,

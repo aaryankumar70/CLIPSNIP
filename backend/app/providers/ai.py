@@ -34,19 +34,28 @@ from ..config import (
 from ..models import db
 from ..schemas.clip import ClipCandidate
 
-SYSTEM_WINDOW_CLIPS = """You find short-video clips in a numbered transcript like [12] text. Choose runs of consecutive
-sentences (60-120 seconds long) that (a) open with a hook in the first sentence: a bold claim,
-question, surprise or strong emotion; (b) make sense with no earlier context; (c) end on a
-completed thought or punchline. Reject intros, sponsor reads, small talk, filler and rambling.
-Return JSON only: {"clips":[{"start_sentence":int,"end_sentence":int,"title":str (max 8 words),
-"hook_reason":str,"standalone":bool,"score":int 1-10}]}. Fewer is better than weak ones.
-10=exceptional, 7=good, 5 or below=skip."""
+SYSTEM_WINDOW_CLIPS = """You are an expert viral editor for YouTube Shorts and TikTok.
+Find the most ENTERTAINING, FUNNY, DRAMATIC, or VIRAL moments in this numbered transcript like [12] text.
 
-SYSTEM_METADATA = """You write YouTube Shorts metadata for a vertical video clip.
+Choose runs of consecutive sentences (20-60 seconds long) that:
+(a) Open with an immediate irresistible hook in the first sentence (curiosity, bold claim, question, hilarious reaction, or shocking statement);
+(b) Are packed with fun, humor, high energy, unexpected twists, heated debate, or high retention moments;
+(c) End on a punchline, laugh, climax, or satisfying conclusion without trailing off into boring filler;
+(d) Make standalone sense with zero prior context.
+
+Reject slow explanations, monologues, sponsor reads, intro chit-chat, and boring segments.
+
+Return JSON only:
+{"clips":[{"start_sentence":int,"end_sentence":int,"title":str (punchy viral title, max 8 words),
+"hook_reason":str,"standalone":bool,"score":int 1-10,"category":str (funny|dramatic|twist|fail|epic|mindblown)}]}.
+Fewer punchy, laugh-out-loud clips are much better than weak filler.
+10=viral gold, 8=super entertaining/funny, 5 or below=skip."""
+
+SYSTEM_METADATA = """You write high-CTR YouTube Shorts metadata for a vertical video clip.
 Requirements:
-1. Title: max 90 characters, creates curiosity without lying about the content.
-2. Description: exactly 3 short lines summarizing the clip.
-3. Tags: an array of exactly 8 relevant tags (no '<' or '>', max 500 characters total).
+1. Title: max 90 characters, punchy curiosity-inducing title with 1-2 relevant emojis (e.g. Bro Did NOT Expect This... 😭, Wait Until The End 💀).
+2. Description: 3 short engaging lines summarizing the hook and punchline, plus an invitation to subscribe/comment.
+3. Tags: an array of exactly 8 relevant viral tags (no '<' or '>', max 500 characters total).
 Return JSON only: {"title": str, "description": str, "tags": [str]}"""
 
 CLIPS_SCHEMA = {
@@ -269,11 +278,14 @@ FILLER_STARTS = {"um", "uh", "so", "like", "well", "actually", "yeah", "okay", "
 
 HOOK_WORDS = {
     "secret", "never", "why", "insane", "truth", "shocking", "best", "worst",
-    "unbelievable", "huge", "warning", "revealed", "finally", "crazy", "impossible"
+    "unbelievable", "huge", "warning", "revealed", "finally", "crazy", "impossible",
+    "bro", "wait", "what", "no", "omg", "shut", "dude", "literally", "died",
+    "fail", "caught", "hilarious", "laugh", "wtf", "cooked", "nah", "crying",
+    "lost", "winner", "epic", "stop", "swear", "look", "watch"
 }
 
 def score_window_heuristic(window_sentences: list[dict[str, Any]]) -> float:
-    """Pre-score a sentence window: speech rate, questions, exclamations, minus sponsor penalty."""
+    """Pre-score a sentence window: speech rate, questions, exclamations, humor/hook cues, minus sponsor penalty."""
     if not window_sentences:
         return 0.0
 
@@ -286,8 +298,17 @@ def score_window_heuristic(window_sentences: list[dict[str, Any]]) -> float:
 
     full_text = " ".join(s.get("text", "") for s in window_sentences).lower()
     sponsor_hits = sum(1 for p in SPONSOR_PATTERNS if re.search(p, full_text))
+    hook_word_hits = sum(1 for w in HOOK_WORDS if re.search(rf"\b{w}\b", full_text))
+    laughter_hits = sum(1 for p in [r"\blol\b", r"\blmao\b", r"\bhaha\b", r"\[laughter\]", r"\[laughs\]"] if re.search(p, full_text))
 
-    score = (speech_rate * 2.0) + (questions * 1.5) + (exclamations * 1.0) - (sponsor_hits * 5.0)
+    score = (
+        (speech_rate * 2.0)
+        + (questions * 1.5)
+        + (exclamations * 1.2)
+        + (min(5, hook_word_hits) * 0.8)
+        + (min(3, laughter_hits) * 2.0)
+        - (sponsor_hits * 5.0)
+    )
     return max(0.0, score)
 
 def build_windows(
@@ -405,6 +426,7 @@ def parse_window_candidates(
             title = str(it.get("title", ""))[:80]
             hook_reason = str(it.get("hook_reason", ""))
             standalone = bool(it.get("standalone", True))
+            category = str(it.get("category", it.get("entertainment_type", "funny")))
         except (KeyError, ValueError, TypeError):
             continue
 
@@ -478,6 +500,7 @@ def parse_window_candidates(
             "duration": round(duration, 2),
             "title": title,
             "hook_reason": hook_reason,
+            "category": category,
             "standalone": standalone,
             "llm_score": llm_score,
             "text": clip_text,
@@ -505,9 +528,9 @@ def score_clip(
     dur = candidate["duration"]
     dur_penalty = 0.0
     if dur < IDEAL_CLIP_MIN_S:
-        dur_penalty = (IDEAL_CLIP_MIN_S - dur) / IDEAL_CLIP_MIN_S * 0.15
+        dur_penalty = min(0.20, (IDEAL_CLIP_MIN_S - dur) / max(1.0, IDEAL_CLIP_MIN_S) * 0.15)
     elif dur > IDEAL_CLIP_MAX_S:
-        dur_penalty = (dur - IDEAL_CLIP_MAX_S) / (MAX_CLIP_S - IDEAL_CLIP_MAX_S) * 0.15
+        dur_penalty = min(0.20, (dur - IDEAL_CLIP_MAX_S) / max(1.0, (MAX_CLIP_S - IDEAL_CLIP_MAX_S)) * 0.15)
 
     silence_penalty = 0.20 if silence_ratio > 0.25 else 0.0
 

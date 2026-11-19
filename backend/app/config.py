@@ -5,8 +5,8 @@ from pathlib import Path
 
 MIN_CLIP_S: int = 60
 MAX_CLIP_S: int = 120
-IDEAL_CLIP_MIN_S: int = 75
-IDEAL_CLIP_MAX_S: int = 100
+IDEAL_CLIP_MIN_S: int = 30
+IDEAL_CLIP_MAX_S: int = 60
 WINDOW_S: int = 300
 WINDOW_OVERLAP_S: int = 30
 MAX_WINDOWS: int = 12

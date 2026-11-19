@@ -147,5 +147,33 @@ class TestStep6YouTubeUpload(unittest.TestCase):
             upload_clip_to_youtube(clip)
         self.assertIn("quota exceeded", str(ctx.exception).lower())
 
+    def test_schedule_single_clip_and_cancel(self):
+        pid = db.create_project("yt_sched_proj", "/tmp/fake.mp4")
+        cid = db.new_id()
+        db.q(
+            "INSERT INTO clips(id,project_id,start,end,title,score,category,description,tags,render_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (cid, pid, 0.0, 35.0, "Scheduled Clip", 92.0, "funny", "Desc", "shorts, funny", "ready", time.time()),
+        )
+
+        future_iso = "2026-11-20T18:00:00Z"
+        res = self.client.post(f"/api/clips/{cid}/upload", json={"privacy_status": "private", "publish_at": future_iso})
+        self.assertEqual(res.status_code, 202)
+        data = res.json()
+        self.assertEqual(data["status"], "queued")
+        self.assertEqual(data["publish_at"], future_iso)
+
+        clip = db.q("SELECT * FROM clips WHERE id=?", (cid,), one=True)
+        self.assertEqual(clip["publish_at"], future_iso)
+        self.assertEqual(clip["youtube_status"], "queued")
+
+        # Now test cancel endpoint
+        res_cancel = self.client.post(f"/api/clips/{cid}/cancel-upload")
+        self.assertEqual(res_cancel.status_code, 200)
+        self.assertEqual(res_cancel.json()["status"], "cancelled")
+
+        clip_after = db.q("SELECT * FROM clips WHERE id=?", (cid,), one=True)
+        self.assertEqual(clip_after["youtube_status"], "ready")
+        self.assertIsNone(clip_after["publish_at"])
+
 if __name__ == "__main__":
     unittest.main()

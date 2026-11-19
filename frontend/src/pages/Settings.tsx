@@ -190,6 +190,7 @@ export default function Settings() {
                 onChange={e => setSettings({ ...settings, caption_style: e.target.value as any })}
               >
                 <option value="highlight">Highlight (Default)</option>
+                <option value="viral">Viral (Neon Pop)</option>
                 <option value="creator">Creator (Animated pop)</option>
                 <option value="bold">Bold</option>
                 <option value="classic">Classic</option>
